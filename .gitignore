@@ -18,4 +18,6 @@ Thumbs.db
 # Dependencies / build output
 node_modules/
 dist/
+dev-dist/
 build/
+.vite/
