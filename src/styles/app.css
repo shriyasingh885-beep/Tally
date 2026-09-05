@@ -25,6 +25,16 @@ body {
   overscroll-behavior: none;
 }
 
+/* Scrolling stays; the bars themselves are hidden so the chrome stays quiet. */
+html,
+body {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -205,6 +215,10 @@ p {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.pane::-webkit-scrollbar {
+  display: none;
 }
 
 /* ============================================================
@@ -334,6 +348,10 @@ p {
   overflow: auto;
   display: flex;
   min-height: 360px;
+  scrollbar-width: none; /* Firefox */
+}
+.grid-wrap::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / Edge */
 }
 .time-col {
   width: 64px;
@@ -859,6 +877,10 @@ p {
   place-items: center;
   padding: 32px 20px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+.setup::-webkit-scrollbar {
+  display: none;
 }
 .setup-card {
   width: min(560px, 100%);
@@ -1256,6 +1278,13 @@ p {
   gap: 10px;
   margin-top: 6px;
 }
+.modal-scroll {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.modal-scroll::-webkit-scrollbar {
+  display: none;
+}
 
 .menu {
   position: fixed;
@@ -1449,7 +1478,11 @@ p {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   padding-bottom: calc(var(--bottom-nav-h) + var(--safe-b) + 8px);
+}
+.m-content::-webkit-scrollbar {
+  display: none;
 }
 .m-page {
   padding: 18px 18px 8px;

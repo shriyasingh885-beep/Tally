@@ -73,7 +73,7 @@ function EditTimetableModal({ onClose }: { onClose: () => void }) {
     <Shell>
       <h3>Edit timetable</h3>
       <p>Adjust subjects, times and rooms. Attendance you’ve already marked is kept.</p>
-      <div style={{ maxHeight: '60vh', overflowY: 'auto', margin: '0 -6px', padding: '0 6px' }}>
+      <div className="modal-scroll" style={{ maxHeight: '60vh', margin: '0 -6px', padding: '0 6px' }}>
         <ClassTable
           classes={rows}
           onChange={(id, patch) => setRows((r) => r.map((c) => (c.id === id ? { ...c, ...patch } : c)))}
