@@ -1,6 +1,8 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useApp } from '../store/appStore'
 import { extractTimetable } from '../lib/parse/extractTimetable'
+import { pdfPages } from '../lib/parse/extractText'
+import { PickPage } from './PickPage'
 import { UploadTimetable } from './UploadTimetable'
 import { ParsingState } from './ParsingState'
 import { TimetableReview } from './TimetableReview'
@@ -34,15 +36,22 @@ export function SetupFlow() {
   const parsingSucceeded = useApp((s) => s.parsingSucceeded)
   const parsingFailed = useApp((s) => s.parsingFailed)
   const setParseProgress = useApp((s) => s.setParseProgress)
+  const offerPages = useApp((s) => s.offerPages)
+
+  // Held so the picker can come back to the same file without a re-upload.
+  const fileRef = useRef<File | null>(null)
 
   const runParse = useCallback(
-    async (file: File) => {
+    async (file: File, pageNumber = 1) => {
+      fileRef.current = file
       startParsing()
       try {
         // Steps light up from the real pipeline — each one is genuine work.
         const ORDER = ['read', 'days', 'slots', 'subjects', 'rooms', 'organize']
         let current = ''
-        const result = await extractTimetable(file, (step, pct) => {
+        const result = await extractTimetable(
+          file,
+          (step, pct) => {
           if (step !== current) {
             const from = ORDER.indexOf(current)
             const to = ORDER.indexOf(step)
@@ -50,9 +59,11 @@ export function SetupFlow() {
             setStepState(step, 'active')
             current = step
           }
-          if (pct != null && pct >= 100) setStepState(step, 'done')
-          setParseProgress(pct ?? null)
-        })
+            if (pct != null && pct >= 100) setStepState(step, 'done')
+            setParseProgress(pct ?? null)
+          },
+          pageNumber,
+        )
         for (const key of ORDER) setStepState(key, 'done')
         setParseProgress(null)
 
@@ -78,9 +89,34 @@ export function SetupFlow() {
     [startParsing, setStepState, parsingSucceeded, parsingFailed, setParseProgress],
   )
 
+  /**
+   * One PDF often holds a timetable per branch. Read the page headings first —
+   * they are in the text layer, so it costs nothing — and ask which one to
+   * parse. A single-page file never sees the question.
+   */
+  const onFile = useCallback(
+    async (file: File) => {
+      fileRef.current = file
+      try {
+        const pages = await pdfPages(file)
+        if (pages.length > 1) {
+          offerPages(pages)
+          return
+        }
+      } catch {
+        // couldn't enumerate — fall through and read it as a single page
+      }
+      void runParse(file, 1)
+    },
+    [offerPages, runParse],
+  )
+
   return (
     <div className="setup">
-      {stage === 'upload' && <UploadTimetable onFile={runParse} />}
+      {stage === 'upload' && <UploadTimetable onFile={onFile} />}
+      {stage === 'pages' && (
+        <PickPage onPick={(n) => fileRef.current && runParse(fileRef.current, n)} />
+      )}
       {stage === 'parsing' && <ParsingState />}
       {stage === 'review' && <TimetableReview />}
       {stage === 'complete' && <SetupComplete />}

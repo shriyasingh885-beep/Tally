@@ -13,6 +13,7 @@ import type {
   Timetable,
 } from '../types'
 import { occurrenceId, uid } from '../lib/id'
+import type { PdfPage } from '../lib/parse/extractText'
 import { cleanTaskTitle } from '../lib/tasks'
 import { addDays, isoDate, localTimezone } from '../lib/time'
 import { startOfWeek } from '../lib/schedule'
@@ -73,6 +74,8 @@ interface AppState {
   parseSteps: ParseStep[]
   parseError: string | null
   reviewNote: string | null
+  /** pages to choose between, when one PDF holds several timetables */
+  pdfPages: PdfPage[]
   parseProgress: number | null
 
   draftClasses: ClassDefinition[]
@@ -92,6 +95,7 @@ interface AppState {
   hydrate: () => Promise<void>
 
   // setup
+  offerPages: (pages: PdfPage[]) => void
   startParsing: () => void
   setStepState: (key: string, state: ParseStep['state']) => void
   setParseProgress: (pct: number | null) => void
@@ -131,6 +135,8 @@ interface AppState {
   // settings
   setAttendanceTarget: (n: number) => void
   setSemester: (startISO: string, endISO: string) => void
+  /** dismiss the first-run semester prompt, keeping the dates as they are */
+  skipSemesterPrompt: () => void
   /** edit one class in place; its id is kept so marked attendance stays attached */
   updateClass: (id: string, patch: Partial<ClassDefinition>) => void
   replaceClasses: (classes: ClassDefinition[]) => void
@@ -165,6 +171,7 @@ export const useApp = create<AppState>((set, get) => {
     parseSteps: freshSteps(),
     parseError: null,
     reviewNote: null,
+    pdfPages: [],
     parseProgress: null,
 
     draftClasses: [],
@@ -206,6 +213,10 @@ export const useApp = create<AppState>((set, get) => {
       } else {
         set({ hydrated: true })
       }
+    },
+
+    offerPages(pages) {
+      set({ setupStage: 'pages', pdfPages: pages, parseError: null })
     },
 
     startParsing() {
@@ -254,6 +265,7 @@ export const useApp = create<AppState>((set, get) => {
         parseSteps: freshSteps(),
         parseError: null,
         reviewNote: null,
+        pdfPages: [],
         draftClasses: [],
         draftBreaks: [],
       })
@@ -485,10 +497,26 @@ export const useApp = create<AppState>((set, get) => {
     setSemester(startISO, endISO) {
       set((s) =>
         s.timetable
-          ? { timetable: { ...s.timetable, semesterStart: startISO, semesterEnd: endISO, updatedAt: new Date().toISOString() } }
+          ? {
+              timetable: {
+                ...s.timetable,
+                semesterStart: startISO,
+                semesterEnd: endISO,
+                // setting them by hand is exactly what confirming means
+                semesterConfirmed: true,
+                updatedAt: new Date().toISOString(),
+              },
+            }
           : {},
       )
-      scheduleSave()
+      flushSave()
+    },
+
+    skipSemesterPrompt() {
+      set((s) =>
+        s.timetable ? { timetable: { ...s.timetable, semesterConfirmed: true } } : {},
+      )
+      flushSave()
     },
 
     /**

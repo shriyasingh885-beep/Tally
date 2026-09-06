@@ -77,6 +77,12 @@ export interface Timetable {
   semesterEnd: string
   /** Minimum attendance target as a percentage (default 75). */
   attendanceTarget: number
+  /**
+   * True once the user has actually seen the semester dates, rather than
+   * inheriting the guess made at setup. Absent on timetables saved before the
+   * prompt existed, which is why they get asked once.
+   */
+  semesterConfirmed?: boolean
   classes: ClassDefinition[]
   /** absent on timetables saved before breaks existed */
   breaks?: BreakPeriod[]
@@ -122,7 +128,7 @@ export interface Task {
 
 export type AppPage = 'home' | 'timetable' | 'attendance'
 
-export type SetupStage = 'upload' | 'parsing' | 'review' | 'complete'
+export type SetupStage = 'upload' | 'pages' | 'parsing' | 'review' | 'complete'
 
 export interface ParseStep {
   key: string

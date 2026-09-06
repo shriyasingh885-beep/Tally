@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useApp } from '../store/appStore'
 import { computeStats } from '../lib/stats'
 import { IconBarChart, IconChevronDown } from '../components/icons'
 import { OverallAttendance } from './OverallAttendance'
 import { SubjectCard } from './SubjectCard'
+import { SemesterPrompt } from './SemesterPrompt'
 
 interface Props {
   now: Date
@@ -22,6 +23,10 @@ export function AttendancePage({ now, onOpenSettings }: Props) {
   const occurrences = useApp((s) => s.occurrences)
   const nonClassDates = useApp((s) => s.nonClassDates)
 
+  // Rendered here rather than from either app shell, so the prompt reaches this
+  // page on a phone and on a desktop without the two having to agree about it.
+  const [askSemester, setAskSemester] = useState(() => !timetable.semesterConfirmed)
+
   const { overall, subjects } = useMemo(
     () => computeStats(timetable, occurrences, nonClassDates, now),
     [timetable, occurrences, nonClassDates, now],
@@ -29,6 +34,7 @@ export function AttendancePage({ now, onOpenSettings }: Props) {
 
   return (
     <div className="at-page">
+      {askSemester && <SemesterPrompt onClose={() => setAskSemester(false)} />}
       <div className="at-head">
         <div>
           <h1 className="at-title">Attendance</h1>

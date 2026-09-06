@@ -291,9 +291,13 @@ export function buildClasses(cells: RawCell[]): {
   return { classes, breaks, corpus }
 }
 
-export async function extractTimetable(file: File, onProgress: ProgressFn): Promise<ParseResult> {
+export async function extractTimetable(
+  file: File,
+  onProgress: ProgressFn,
+  pageNumber = 1,
+): Promise<ParseResult> {
   onProgress('read', 0)
-  const canvas = await fileToCanvas(file)
+  const canvas = await fileToCanvas(file, pageNumber)
   onProgress('read', 100)
 
   onProgress('days', 0)
@@ -302,7 +306,7 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
   // No ruled grid (a photo, a borderless layout) — fall back to inferring the
   // structure from OCR word positions.
   if (!grid || grid.xs.length < 3 || grid.ys.length < 3) {
-    const flow = await extractDocument(file)
+    const flow = await extractDocument(file, undefined, pageNumber)
     return parseTimetable(flow)
   }
 
@@ -310,7 +314,7 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
   let pdfRead: ReadRegion | null = null
   if (isPdf(file)) {
     try {
-      const flow = await extractDocument(file)
+      const flow = await extractDocument(file, undefined, pageNumber)
       if (flow.source === 'pdf-text' && flow.tokens.length > 15) {
         // fileToCanvas renders PDFs at 2x; line up the text with that.
         const scaled = flow.tokens.map((t) => ({ ...t, x: t.x * 2, y: t.y * 2, w: t.w * 2, h: t.h * 2 }))
