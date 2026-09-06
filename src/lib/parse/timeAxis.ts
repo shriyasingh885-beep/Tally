@@ -124,10 +124,28 @@ export function buildTimeAxis(ys: number[], rowTexts: string[]): TimeAxis {
   const slots: Array<Slot | null> = ranges.map((r) =>
     r == null ? null : { start: r.start, end: r.end ?? r.start + step, inferred: r.end == null },
   )
-  for (let i = 1; i < slots.length; i++) {
+  // Only ever fill INSIDE the labelled range. A document does not stop at the
+  // timetable — a subject-code legend, a notes block, a signature line all sit
+  // below it in the same ruled box, and carrying the clock forward over them
+  // invents classes at 8pm out of a footnote. Rows past the last real label are
+  // left null, which drops them.
+  let lastLabelled = -1
+  for (let i = ranges.length - 1; i >= 0; i--) {
+    if (ranges[i]) {
+      lastLabelled = i
+      break
+    }
+  }
+  for (let i = 1; i <= lastLabelled; i++) {
     if (slots[i]) continue
     const prev = slots[i - 1]
     if (prev) slots[i] = { start: prev.end, end: prev.end + step, inferred: true }
+  }
+  const trailing = slots.length - 1 - lastLabelled
+  if (lastLabelled >= 0 && trailing > 0) {
+    warnings.push(
+      `${trailing} row${trailing === 1 ? '' : 's'} below the last time label were ignored as not part of the timetable`,
+    )
   }
   // Backwards too: a run of unreadable labels at the top of the table used to
   // strand every class in those rows, because a null slot skips the whole row.

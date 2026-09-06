@@ -62,10 +62,10 @@ export function SetupFlow() {
         }
         if (result.partial) {
           const key = result.reason ?? (result.classes.length ? 'messy' : 'no-cells')
-          parsingSucceeded(result.classes, PARTIAL_NOTES[key] ?? PARTIAL_NOTES.messy)
+          parsingSucceeded(result.classes, result.breaks, PARTIAL_NOTES[key] ?? PARTIAL_NOTES.messy)
           return
         }
-        parsingSucceeded(result.classes)
+        parsingSucceeded(result.classes, result.breaks)
       } catch (err) {
         const msg =
           err instanceof Error && err.message === 'image-decode'

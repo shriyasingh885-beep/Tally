@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   AppPage,
   AttendanceStatus,
+  BreakPeriod,
   ClassDefinition,
   NonClassDate,
   Occurrence,
@@ -75,6 +76,7 @@ interface AppState {
   parseProgress: number | null
 
   draftClasses: ClassDefinition[]
+  draftBreaks: BreakPeriod[]
   draftMeta: DraftMeta
 
   timetable: Timetable | null
@@ -93,7 +95,7 @@ interface AppState {
   startParsing: () => void
   setStepState: (key: string, state: ParseStep['state']) => void
   setParseProgress: (pct: number | null) => void
-  parsingSucceeded: (classes: ClassDefinition[], note?: string | null) => void
+  parsingSucceeded: (classes: ClassDefinition[], breaks?: BreakPeriod[], note?: string | null) => void
   parsingFailed: (message: string) => void
   enterManualEntry: () => void
   restartSetup: () => void
@@ -166,6 +168,7 @@ export const useApp = create<AppState>((set, get) => {
     parseProgress: null,
 
     draftClasses: [],
+    draftBreaks: [],
     draftMeta: {
       name: 'My Timetable',
       timezone: localTimezone(),
@@ -225,10 +228,11 @@ export const useApp = create<AppState>((set, get) => {
       set({ parseProgress: pct })
     },
 
-    parsingSucceeded(classes, note = null) {
+    parsingSucceeded(classes, breaks = [], note = null) {
       set((s) => ({
         setupStage: 'review',
         draftClasses: classes,
+        draftBreaks: breaks,
         reviewNote: note,
         parseSteps: s.parseSteps.map((st) => ({ ...st, state: 'done' })),
       }))
@@ -251,6 +255,7 @@ export const useApp = create<AppState>((set, get) => {
         parseError: null,
         reviewNote: null,
         draftClasses: [],
+        draftBreaks: [],
       })
     },
 
@@ -336,6 +341,7 @@ export const useApp = create<AppState>((set, get) => {
         semesterEnd: s.draftMeta.semesterEnd,
         attendanceTarget: s.draftMeta.attendanceTarget,
         classes: cleaned,
+        breaks: s.draftBreaks,
         createdAt: now,
         updatedAt: now,
       }
@@ -532,6 +538,7 @@ export const useApp = create<AppState>((set, get) => {
         parseSteps: freshSteps(),
         parseError: null,
         draftClasses: [],
+        draftBreaks: [],
         timetable: null,
         occurrences: {},
         nonClassDates: {},

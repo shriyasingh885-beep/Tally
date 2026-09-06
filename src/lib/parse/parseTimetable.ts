@@ -1,10 +1,12 @@
-import type { ClassDefinition, ClassType } from '../../types'
+import type { BreakPeriod, ClassDefinition, ClassType } from '../../types'
 import { uid } from '../id'
 import { clockToMinutes, minutesToClock, parseTimeToMinutes } from '../time'
 import type { Extraction, Token } from './extractText'
 
 export interface ParseResult {
   classes: ClassDefinition[]
+  /** lunch and the like, kept out of the class list */
+  breaks?: BreakPeriod[]
   /** false only when the file yielded no readable text at all */
   ok: boolean
   /** true when we read text but couldn't build a confident grid */

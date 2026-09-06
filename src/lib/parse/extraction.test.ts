@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RawCell } from './cellModel'
-import { analyseCorpus, classifyCell, looksLikeRoom } from './cellModel'
+import { analyseCorpus, classifyCell, joinWrappedLines, looksLikeRoom } from './cellModel'
 import { buildClasses } from './extractTimetable'
 import { canonicalize } from './canonicalize'
 import { batchMatches, filterByBatch, groupByTime, selectableBatches } from '../groupClasses'
@@ -378,5 +378,94 @@ describe('mobile grouping and batch filter', () => {
     const assembly = built.find((c) => c.subject === 'Assembly')!
     expect(assembly.batch).toBeUndefined()
     expect(filterByBatch(built, 'B1').map((c) => c.subject)).toContain('Assembly')
+  })
+})
+
+describe('subjects that merely start alike', () => {
+  it('keeps Applied Physics and Applied Chemistry apart', () => {
+    const map = canonicalize(['Applied Physics', 'Applied Chemistry'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Applied Physics', 'Applied Chemistry']))
+  })
+
+  it('keeps two Mathematics courses apart', () => {
+    const map = canonicalize(['Mathematics for Engineers', 'Mathematics III'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Mathematics for Engineers', 'Mathematics III']))
+  })
+
+  it('never votes its way to a word that was never read', () => {
+    // the regression this guards: a bad merge plus per-character voting once
+    // produced "Applied Phemysics", which is not a subject anywhere
+    for (const v of canonicalize(['Applied Physics', 'Applied Chemistry']).values()) {
+      expect(['Applied Physics', 'Applied Chemistry']).toContain(v)
+    }
+  })
+
+  it('still folds a genuine truncation back together', () => {
+    const map = canonicalize(['Linux Shell Prog', 'Linux Shell Pro', 'Linux Shell Prog'])
+    expect(new Set([...map.values()]).size).toBe(1)
+  })
+
+  it('keeps a course code and its brackets intact', () => {
+    const codes = ['CE(T)(CH)', 'CE(L)(MA)', 'CE(T)(IT)', 'CE(L)(IT)']
+    const map = canonicalize(codes)
+    for (const c of codes) expect(map.get(c)).toBe(c)
+  })
+})
+
+describe('lunch is not a class', () => {
+  const withLunch: RawCell[] = [
+    cell({ day: 1, start: at(11), end: at(12), lines: ['Applied Physics', 'B', 'LT-002'] }),
+    cell({ day: 1, start: at(12) + 45, end: at(14), lines: ['LUNCH BREAK'] }),
+    cell({ day: 2, start: at(12) + 45, end: at(14), lines: ['LUNCH BREAK'] }),
+    cell({ day: 3, start: at(12) + 45, end: at(14), lines: ['LUNCH BREAK'] }),
+    cell({ day: 1, start: at(14), end: at(15), lines: ['Applied Chemistry', 'B', 'LT-002'] }),
+  ]
+
+  it('keeps it out of the class list entirely', () => {
+    const { classes } = buildClasses(withLunch)
+    expect(classes.map((c) => c.subject)).toEqual(['Applied Physics', 'Applied Chemistry'])
+  })
+
+  it('returns it once, not once per day column', () => {
+    const { breaks } = buildClasses(withLunch)
+    expect(breaks).toHaveLength(1)
+    expect(breaks[0]).toMatchObject({ label: 'Lunch break', startTime: '12:45', endTime: '14:00' })
+  })
+
+  it('leaves a timetable without breaks alone', () => {
+    expect(buildClasses(BE_II_YEAR_B).breaks).toEqual([])
+  })
+
+  it('does not let the two Applied subjects merge into one another', () => {
+    const subjects = buildClasses(withLunch).classes.map((c) => c.subject)
+    expect(new Set(subjects).size).toBe(2)
+  })
+})
+
+describe('labels the column was too narrow to hold', () => {
+  it('rejoins a code split across three lines', () => {
+    expect(joinWrappedLines(['CE(T1-', 'ME112)/CE(T2-', 'MEDH1)'])).toEqual(['CE(T1-ME112)/CE(T2-MEDH1)'])
+  })
+
+  it('closes a bracket left open on the line before', () => {
+    expect(joinWrappedLines(['CE(P1-PH)/CE(P2', '-CH)'])).toEqual(['CE(P1-PH)/CE(P2-CH)'])
+  })
+
+  it('leaves ordinary cell lines alone', () => {
+    expect(joinWrappedLines(['OOP', 'B', 'US', 'ATC-301'])).toEqual(['OOP', 'B', 'US', 'ATC-301'])
+  })
+
+  it('does not glue a room onto a finished subject', () => {
+    expect(joinWrappedLines(['Mathematics III', 'B', 'ATC-309'])).toEqual(['Mathematics III', 'B', 'ATC-309'])
+  })
+
+  it('stops a wrapped code being read as a class plus a room', () => {
+    const corpus = analyseCorpus(BE_II_YEAR_B)
+    const parsed = classifyCell(
+      cell({ day: 1, start: at(10), end: at(12), lines: ['CE(T1-', 'ME112)/CE(T2-', 'MEDH1)'] }),
+      corpus,
+    )
+    expect(parsed?.subject).toBe('CE(T1-ME112)/CE(T2-MEDH1)')
+    expect(parsed?.room).toBe('')
   })
 })

@@ -151,3 +151,21 @@ describe('an axis that does not tile the day', () => {
     expect(axis.warnings.join(' ')).toMatch(/overlap/)
   })
 })
+
+describe('material below the timetable', () => {
+  it('ignores rows past the last time label instead of inventing hours for them', () => {
+    // a subject-code legend sits under the grid in the same ruled box; carrying
+    // the clock over it used to produce classes at 8pm made of footnotes
+    const axis = buildTimeAxis(
+      [0, 50, 100, 150, 200, 250],
+      ['09:00-10:00', '10:00-11:00', 'MA10021', 'BG10181', 'IT10007'],
+    )
+    expect(spans(axis)).toEqual([[at(9), at(10)], [at(10), at(11)], null, null, null])
+    expect(axis.warnings.join(' ')).toMatch(/3 rows below the last time label/)
+  })
+
+  it('still fills an unreadable label that sits between two good ones', () => {
+    const axis = buildTimeAxis([0, 50, 100, 150], ['09:00-10:00', '???', '11:00-12:00'])
+    expect(spans(axis)).toEqual([[at(9), at(10)], [at(10), at(11)], [at(11), at(12)]])
+  })
+})

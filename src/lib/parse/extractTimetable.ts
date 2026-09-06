@@ -1,10 +1,11 @@
-import type { ClassDefinition } from '../../types'
+import type { BreakPeriod, ClassDefinition } from '../../types'
 import { uid } from '../id'
-import { minutesToClock } from '../time'
+import { minutesToClock, parseTimeRanges } from '../time'
 import { canonicalize } from './canonicalize'
 import { detectGrid, type DetectedGrid } from './gridDetect'
 import { buildTimeAxis } from './timeAxis'
 import { binarize, ocrScale } from './ocrPrep'
+import { breakLabel, dedupeBreaks, isBreakLabel } from '../breaks'
 import { extractDocument, fileToCanvas, isPdf, type Token } from './extractText'
 import { matchDay, parseTimetable, type ParseResult } from './parseTimetable'
 import { analyseCorpus, classifyCell, type Corpus, type RawCell } from './cellModel'
@@ -129,9 +130,14 @@ async function findHeaderRow(
   read: ReadRegion,
   grid: DetectedGrid,
 ): Promise<{ rowIndex: number; dayByCol: Map<number, number> } | null> {
-  const maxProbe = Math.min(3, grid.ys.length - 1)
-  let best: { rowIndex: number; dayByCol: Map<number, number> } | null = null
+  // Probe deep enough to clear a masthead. An institute timetable can spend
+  // three or four ruled rows on a crest, a title and a semester line before the
+  // day names appear; stopping at row 3 finds nothing and the whole parse is
+  // reported as "no recognisable grid". Rows are only read until four days turn
+  // up, so a normal timetable with its header on row 0 still costs one probe.
+  const maxProbe = Math.min(8, grid.ys.length - 1)
 
+  const perRow: Array<Map<number, number>> = []
   for (let r = 0; r < maxProbe; r++) {
     const dayByCol = new Map<number, number>()
     for (let c = 0; c < grid.xs.length - 1; c++) {
@@ -144,12 +150,34 @@ async function findHeaderRow(
         }
       }
     }
-    if (dayByCol.size >= 2 && (!best || dayByCol.size > best.dayByCol.size)) {
-      best = { rowIndex: r, dayByCol }
+    perRow.push(dayByCol)
+    // four days is a header; nothing below it will beat that
+    if (dayByCol.size >= 4 && r + 1 < maxProbe) {
+      // keep going one row in case the heading straddles a rule (see below)
+      if (perRow.length > 1 && perRow[r - 1]?.size) break
     }
-    if (dayByCol.size >= 4) break
   }
-  return best
+
+  const start = perRow.findIndex((m) => m.size >= 2)
+  if (start < 0) return null
+
+  // A heading is not always one row tall. A rule drawn through it — or a
+  // two-line heading — puts "MONDAY" on one row and the rest of the header,
+  // including the word "TIME", on the next. Taking the first of those as the
+  // header leaves the leftover row looking like a period with no time label,
+  // and the axis then invents an hour for it that the morning's real classes
+  // merge into. So take the header as the whole run of rows carrying day
+  // names, and start the body after the last of them.
+  const dayByCol = new Map<number, number>()
+  let rowIndex = start
+  for (let r = start; r < perRow.length; r++) {
+    if (r > start && perRow[r].size === 0) break
+    for (const [c, dow] of perRow[r]) {
+      if (![...dayByCol.values()].includes(dow)) dayByCol.set(c, dow)
+    }
+    rowIndex = r
+  }
+  return { rowIndex, dayByCol }
 }
 
 /** Raw label text for every body row of the time gutter, unparsed. */
@@ -178,7 +206,25 @@ async function readTimeLabels(
  * everything from here on is pure logic over RawCell records — no canvas, no
  * OCR engine, no DOM.
  */
-export function buildClasses(cells: RawCell[]): { classes: ClassDefinition[]; corpus: Corpus } {
+export function buildClasses(cells: RawCell[]): {
+  classes: ClassDefinition[]
+  breaks: BreakPeriod[]
+  corpus: Corpus
+} {
+  // Lunch is printed as a row like any other, so lift it out before anything
+  // treats it as a subject — otherwise it lands in the class list with an
+  // attendance checkbox, and a meal starts counting against your percentage.
+  const breakCells = cells.filter((c) => isBreakLabel(c.lines[0] ?? ''))
+  const breaks = dedupeBreaks(
+    breakCells.map((c) => ({
+      id: uid('brk'),
+      label: breakLabel(c.lines[0]),
+      startTime: minutesToClock(c.startMin),
+      endTime: minutesToClock(c.endMin),
+    })),
+  )
+  cells = cells.filter((c) => !isBreakLabel(c.lines[0] ?? ''))
+
   const corpus = analyseCorpus(cells)
 
   const drafts: Array<{ cls: ClassDefinition; cell: RawCell }> = []
@@ -242,7 +288,7 @@ export function buildClasses(cells: RawCell[]): { classes: ClassDefinition[]; co
     if (review.size) c.review = [...review]
   }
 
-  return { classes, corpus }
+  return { classes, breaks, corpus }
 }
 
 export async function extractTimetable(file: File, onProgress: ProgressFn): Promise<ParseResult> {
@@ -320,14 +366,43 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
       return { classes: [], ok: true, partial: true, reason: 'no-times' }
     }
 
-    const labels = await readTimeLabels(readLine, grid, timeCol, firstBodyRow, onProgress)
+    const rawLabels = await readTimeLabels(readLine, grid, timeCol, firstBodyRow, onProgress)
+
+    // A header does not always end where its day names do. A stray rule through
+    // the heading leaves the word "TIME" stranded on a row of its own, and that
+    // row has no period label — so the axis backfills one from the row below and
+    // invents a 7:45 slot that the morning's real classes then merge into.
+    // Step over leading rows that carry neither a time nor any class: they are
+    // the tail of the heading, not the start of the day. A row with content is
+    // kept even when its label is unreadable, so a genuine first period whose
+    // label failed OCR is still repaired rather than dropped.
+    let skip = 0
+    while (skip < rawLabels.length && !parseTimeRanges(rawLabels[skip]).length) {
+      const r = firstBodyRow + skip
+      const hasContent = dayCols.some(
+        (c) =>
+          grid.inkRatio(
+            grid.xs[c] + CELL_INSET,
+            grid.ys[r] + CELL_INSET,
+            grid.xs[c + 1] - CELL_INSET,
+            grid.ys[r + 1] - CELL_INSET,
+          ) >= BLANK_INK,
+      )
+      if (hasContent) break
+      skip++
+    }
+    const bodyRow0 = firstBodyRow + skip
+    const labels = rawLabels.slice(skip)
+    if (bodyRow0 >= grid.ys.length - 1) {
+      return { classes: [], ok: true, partial: true, reason: 'no-times' }
+    }
 
     // The labels have the last word on the row structure: a cell carrying two
     // of them proves a boundary the pixels lost, so the axis can hand back
     // corrected geometry to go with its slots.
-    const axis = buildTimeAxis(grid.ys.slice(firstBodyRow), labels)
+    const axis = buildTimeAxis(grid.ys.slice(bodyRow0), labels)
     if (!axis.slots.some(Boolean)) return { classes: [], ok: true, partial: true, reason: 'no-times' }
-    const ys = [...grid.ys.slice(0, firstBodyRow), ...axis.ys]
+    const ys = [...grid.ys.slice(0, bodyRow0), ...axis.ys]
     const slots = axis.slots
 
     onProgress('subjects', 0)
@@ -335,12 +410,12 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
     // ---- pass A: read every occupied cell, keeping its geometry ----
     const cells: RawCell[] = []
     const consumed = new Set<string>()
-    const bodyRows = ys.length - 1 - firstBodyRow
+    const bodyRows = ys.length - 1 - bodyRow0
     let done = 0
     const totalCells = bodyRows * dayCols.length
 
-    for (let r = firstBodyRow; r < ys.length - 1; r++) {
-      const slot = slots[r - firstBodyRow]
+    for (let r = bodyRow0; r < ys.length - 1; r++) {
+      const slot = slots[r - bodyRow0]
       for (const c of dayCols) {
         done++
         onProgress('subjects', (done / Math.max(1, totalCells)) * 100)
@@ -364,8 +439,8 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
         const yBot = ys[r + span]
         // Every row the cell covers must be accounted for, so take the end from
         // the last one that has a slot rather than assuming the span's own tail.
-        let endSlot = slots[r + span - 1 - firstBodyRow]
-        for (let k = span - 1; k >= 0 && !endSlot; k--) endSlot = slots[r + k - firstBodyRow]
+        let endSlot = slots[r + span - 1 - bodyRow0]
+        for (let k = span - 1; k >= 0 && !endSlot; k--) endSlot = slots[r + k - bodyRow0]
         const endMin = Math.max(slot.end, endSlot ? endSlot.end : slot.end)
 
         // Interior rules split one slot into parallel batches (B1 | B2 | B3).
@@ -407,7 +482,7 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
 
     // ---- passes B–E: corpus analysis, classification, validation ----
     onProgress('rooms', 50)
-    const { classes } = buildClasses(cells)
+    const { classes, breaks } = buildClasses(cells)
     onProgress('rooms', 100)
     onProgress('organize', 100)
 
@@ -420,6 +495,7 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
     const messy = flagged > classes.length / 2
     return {
       classes,
+      breaks,
       ok: true,
       partial: messy || axis.gaps.length > 0,
       reason: axis.gaps.length && !messy ? 'time-gap' : undefined,

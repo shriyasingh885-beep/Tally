@@ -47,6 +47,23 @@ export interface ClassDefinition {
   sourceCell?: SourceCell
 }
 
+/**
+ * A gap the timetable prints as a row of its own — lunch, recess, a tea break.
+ *
+ * Not a ClassDefinition: nobody takes attendance at lunch, and letting one into
+ * the class list would drag it into every percentage on the attendance page. It
+ * is a marker on the day, and every day gets it, which is how timetables draw
+ * them: one band straight across all the columns.
+ */
+export interface BreakPeriod {
+  id: string
+  /** as printed, tidied — "Lunch break", "Break" */
+  label: string
+  /** "HH:MM" 24-hour local wall-clock */
+  startTime: string
+  endTime: string
+}
+
 export interface Timetable {
   id: string
   name: string
@@ -61,6 +78,8 @@ export interface Timetable {
   /** Minimum attendance target as a percentage (default 75). */
   attendanceTarget: number
   classes: ClassDefinition[]
+  /** absent on timetables saved before breaks existed */
+  breaks?: BreakPeriod[]
   createdAt: string
   updatedAt: string
 }

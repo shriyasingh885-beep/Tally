@@ -6,8 +6,11 @@ import { getWeekDays, withinSemester } from '../lib/schedule'
 import { clockToMinutes, isoDate, isoWeekday, minutesToLabel } from '../lib/time'
 import { dowShort } from '../lib/format'
 import { filterByBatch, groupByTime, selectableBatches } from '../lib/groupClasses'
+import { withBreaks } from '../lib/breaks'
 import { IconMoreVertical, IconSearch, IconX } from '../components/icons'
 import { AgendaCard } from './AgendaCard'
+import { ThemeToggle } from '../components/ThemeToggle'
+import { useSwipe } from '../hooks/useSwipe'
 
 interface Props {
   now: Date
@@ -54,6 +57,18 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
     return groupByTime(list)
   }, [timetable.classes, selectedDow, search, batch])
 
+  // Lunch sits in the running order rather than leaving an unexplained hole
+  // between the noon class and the two o'clock one.
+  const rows = useMemo(() => withBreaks(groups, timetable.breaks), [groups, timetable.breaks])
+
+  // Thumb through the week the way you would a photo album. Clamped rather than
+  // wrapping: running off Friday into Monday reads as a glitch, and the day
+  // pills are right there for a jump across the week.
+  const swipe = useSwipe({
+    onLeft: () => setSelectedDow((d) => Math.min(5, d + 1)),
+    onRight: () => setSelectedDow((d) => Math.max(1, d - 1)),
+  })
+
   const viewFor = (defId: string) => {
     const def = timetable.classes.find((c) => c.id === defId)!
     const stored = occurrences[occurrenceId(def.id, dISO)]
@@ -62,10 +77,11 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
   }
 
   return (
-    <div className="m-page m-timetable">
+    <div className="m-page m-timetable" {...swipe}>
       <header className="m-topbar">
         <h1>Timetable</h1>
         <div className="m-topbar-actions">
+          <ThemeToggle />
           <button
             className="icon-btn"
             aria-label={searchOpen ? 'Close search' : 'Search'}
@@ -137,8 +153,16 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
             {search || batch ? 'No matching classes.' : 'No classes today'}
           </div>
         ) : (
-          groups.map((group) =>
-            group.classes.length === 1 ? (
+          rows.map((row) =>
+            row.kind === 'break' ? (
+              <div className="break-row" key={row.brk.id}>
+                <span className="break-line" aria-hidden="true" />
+                <span className="break-text">{row.brk.label}</span>
+                <span className="break-line" aria-hidden="true" />
+              </div>
+            ) : (() => {
+              const group = row.item
+              return group.classes.length === 1 ? (
               // A lone class carries its own time — no heading needed.
               <div className="agenda-single" key={group.key}>
                 <AgendaCard
@@ -166,7 +190,8 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
                   ))}
                 </div>
               </section>
-            ),
+              )
+            })(),
           )
         )}
       </div>

@@ -34,16 +34,42 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length]
 }
 
+/**
+ * The single-letter tokens in a normalised label, in order.
+ *
+ * In a course code they carry the entire meaning: the L and T of "CE(L)(IT)"
+ * and "CE(T)(IT)" are the lecture and the tutorial of one subject — one edit
+ * apart, and different classes that meet at different times. Fuzzy matching
+ * rates them 86% alike and would happily merge them, so they have to agree
+ * before similarity is even consulted. Ordinary subject names have none of
+ * these, so nothing else is affected.
+ */
+function markers(s: string): string {
+  return s
+    .split(' ')
+    .filter((t) => t.length === 1)
+    .join('')
+}
+
 function similarity(a: string, b: string): number {
   const max = Math.max(a.length, b.length)
   if (!max) return 1
   return 1 - levenshtein(a, b) / max
 }
 
+/** Does a trailing bracket close one that the string actually opened? */
+function closesAPair(s: string): boolean {
+  const opens = (s.match(/[([]/g) ?? []).length
+  const closes = (s.match(/[)\]]/g) ?? []).length
+  return /[)\]]$/.test(s) && opens >= closes
+}
+
 /** Tail junk OCR loves to invent: "OOP E]", "DSD 3)", "Physics 1". */
 function trimJunk(s: string): string {
   let out = s.trim()
-  out = out.replace(/[\s|]*[^\w\s]{1,3}$/u, '').trim()
+  // ...but a bracket closing one the subject opened belongs to its name: course
+  // codes like "CE(T)(CH)" and "CE(P1-PH)/CE(P2-CH)" are not OCR debris.
+  if (!closesAPair(out)) out = out.replace(/[\s|]*[^\w\s]{1,3}$/u, '').trim()
   // a trailing 1-2 char orphan that isn't a real roman numeral or batch marker
   out = out.replace(/\s+(?![IViv]{1,4}$)[a-z0-9]{1,2}$/u, '').trim()
   // "Mathematics m" / "Mathematics rn" — a mangled "III"
@@ -207,8 +233,16 @@ export function canonicalize(values: string[], opts: CanonOptions = {}): Map<str
     let placed = false
     for (const cluster of clusters) {
       const rep = normal(cluster[0])
-      // Long shared prefixes catch truncations that edit distance rates poorly.
-      const prefix = Math.min(n.length, rep.length) >= 6 && n.slice(0, 6) === rep.slice(0, 6)
+      // A truncation means one reading IS the start of the other, missing only a
+      // short tail — "Limux Shell Pro" for "Limux Shell Prog". Merely opening
+      // with the same word is not: a timetable full of "Applied Physics" and
+      // "Applied Chemistry", or "Mathematics III" and "Mathematics for
+      // Engineers", would otherwise collapse subjects that share nothing.
+      const [shorter, longer] = n.length <= rep.length ? [n, rep] : [rep, n]
+      const prefix =
+        shorter.length >= 6 &&
+        longer.startsWith(shorter) &&
+        longer.length - shorter.length <= Math.max(2, Math.round(longer.length * 0.2))
       const fuzzy = similarity(n, rep) >= threshold || prefix
 
       // Two readings that BOTH recur are two real subjects, not one subject
@@ -222,7 +256,7 @@ export function canonicalize(values: string[], opts: CanonOptions = {}): Map<str
       const allowance = Math.max(1, Math.floor(n.length / 6))
       const sameShape =
         n.length === rep.length && levenshtein(n, rep) <= allowance && similarity(n, rep) >= 0.8
-      const mergeable = bothEstablished ? sameShape : fuzzy
+      const mergeable = (bothEstablished ? sameShape : fuzzy) && markers(n) === markers(rep)
 
       if (mergeable) {
         cluster.push(u)
@@ -263,8 +297,12 @@ export function canonicalize(values: string[], opts: CanonOptions = {}): Map<str
       best,
       cluster.map((c) => ({ text: c, count: counts.get(c) ?? 0 })),
     )
+    // 0.85, not 0.6: a vote is meant to correct a character here and there. A
+    // result that has drifted further is not a better reading of the same
+    // subject but an invention — "Applied Physics" and "Applied Chemistry" once
+    // voted their way to "Applied Phemysics" — so keep the real spelling.
     const elected =
-      voted && similarity(normal(voted), normal(best)) >= 0.6 && cleanliness(voted) >= cleanliness(best)
+      voted && similarity(normal(voted), normal(best)) >= 0.85 && cleanliness(voted) >= cleanliness(best)
         ? voted
         : best
 

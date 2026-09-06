@@ -140,8 +140,44 @@ function classifyTypeFrom(subject: string): ClassType {
  * Split one cell's lines into subject / batch / faculty / room using the
  * vocabulary inferred from the whole document plus positional convention.
  */
+/**
+ * Re-join a label the column was too narrow to hold on one line.
+ *
+ * A course code like "CE(T1-ME112)/CE(T2-MEDH1)" wraps across three lines in a
+ * narrow column. Read line by line it becomes the subject "CE(T1", the room
+ * "ME112" and a discarded remainder — a class that never existed, and a room
+ * that is really half a batch code.
+ *
+ * A line that leaves a bracket open, or ends on a hyphen or slash, is
+ * unfinished by the document's own punctuation, so the next line belongs to it.
+ * That is a fact about the text rather than a guess about the timetable, which
+ * is why it can run before anything is classified.
+ */
+export function joinWrappedLines(lines: string[]): string[] {
+  const out: string[] = []
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    const prev = out[out.length - 1]
+    if (prev !== undefined && continues(prev)) {
+      // no space where the break falls on a hyphen or slash, either side of it
+      const tight = /[-/]$/.test(prev) || /^[-/]/.test(line)
+      out[out.length - 1] = tight ? prev + line : `${prev} ${line}`
+      continue
+    }
+    out.push(line)
+  }
+  return out
+}
+
+function continues(line: string): boolean {
+  const opens = (line.match(/[([]/g) ?? []).length
+  const closes = (line.match(/[)\]]/g) ?? []).length
+  return opens > closes || /[-/]$/.test(line)
+}
+
 export function classifyCell(cell: RawCell, corpus: Corpus): ClassifiedCell | null {
-  const lines = cell.lines.map((l) => l.trim()).filter(Boolean)
+  const lines = joinWrappedLines(cell.lines)
   if (!lines.length) return null
 
   const subjectParts: string[] = []

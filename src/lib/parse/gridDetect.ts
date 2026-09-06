@@ -143,12 +143,6 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
     for (let x = x0; x <= x1; x++) if (ink[off + x]) n++
     return n
   }
-  const colInk = (x: number, y0: number, y1: number) => {
-    let n = 0
-    for (let y = y0; y <= y1; y++) if (ink[y * w + x]) n++
-    return n
-  }
-
   /**
    * Longest unbroken stretch of ink along a scanline.
    *
@@ -179,6 +173,39 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
     return run > longest ? run : longest
   }
 
+  /**
+   * Ink belonging to runs at least `minRun` long, added up.
+   *
+   * A column border is not always one unbroken stroke: a row merged straight
+   * across the table — a LUNCH BREAK band spanning every day — cuts every
+   * interior rule in two. Judged on its longest run such a rule looks like half
+   * a rule and gets thrown away, taking the column boundary with it and merging
+   * two weekdays into one cell. Summing the long pieces survives the cut, while
+   * glyph strokes, which are far shorter than `minRun`, still contribute
+   * nothing.
+   */
+  const runTotal = (start: number, stride: number, count: number, minRun: number) => {
+    let total = 0
+    let run = 0
+    let gap = 0
+    for (let i = 0, p = start; i < count; i++, p += stride) {
+      if (ink[p]) {
+        run += gap + 1
+        gap = 0
+        continue
+      }
+      if (!run) continue
+      gap++
+      if (gap > RUN_GAP) {
+        if (run >= minRun) total += run
+        run = 0
+        gap = 0
+      }
+    }
+    if (run >= minRun) total += run
+    return total
+  }
+
   // Rules stay hairline even on big scans; filled bands do not.
   const maxThickness = Math.max(6, Math.round(Math.max(w, h) / 250))
 
@@ -188,12 +215,36 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
   let ys = clusterRuns(hHits, maxThickness)
   if (ys.length < 3) return null
 
-  // --- pass 2: vertical rules, measured across the candidate y-range --------
-  const tableH = ys[ys.length - 1] - ys[0]
-  if (tableH < 40) return null
+  // --- pass 2: vertical rules, measured against the TALLEST rule ------------
+  // Not against the candidate y-range: a page is rarely just a table. A legend,
+  // a notes block or a signature line below it all produce full-width rules, so
+  // that range can be half again the height of the timetable — and every column
+  // border, which stops where the timetable stops, then falls under the bar and
+  // is thrown away. Columns collapse into each other, two weekdays end up in one
+  // cell, and only the first of them is ever seen.
+  //
+  // The tallest unbroken run on the page IS the table's own border, so measuring
+  // every other rule against that is self-calibrating: interior columns of the
+  // same height qualify, and shorter rules belonging to some other block below
+  // do not.
+  const bandTop = ys[0]
+  const bandBottom = ys[ys.length - 1]
+  if (bandBottom - bandTop < 40) return null
 
+  const bandH = bandBottom - bandTop + 1
+  let tallest = 0
+  for (let x = 0; x < w; x++) {
+    const run = longestRun(bandTop * w + x, w, bandH)
+    if (run > tallest) tallest = run
+  }
+  if (tallest < 40) return null
+
+  // Long enough to be part of a rule, far longer than any letter stroke.
+  const minRuleRun = Math.max(20, Math.round(tallest * 0.08))
   const vHits: number[] = []
-  for (let x = 0; x < w; x++) if (colInk(x, ys[0], ys[ys.length - 1]) > V_COVERAGE * tableH) vHits.push(x)
+  for (let x = 0; x < w; x++) {
+    if (runTotal(bandTop * w + x, w, bandH, minRuleRun) >= V_COVERAGE * tallest) vHits.push(x)
+  }
   const xs = clusterRuns(vHits, maxThickness)
   if (xs.length < 3) return null
 

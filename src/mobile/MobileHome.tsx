@@ -5,9 +5,11 @@ import { occurrenceDisplay, type DisplayStatus } from '../lib/occurrenceDisplay'
 import { withinSemester } from '../lib/schedule'
 import { clockToMinutes, isoDate, isoWeekday, minutesToLabel } from '../lib/time'
 import { countDone, sortTasks } from '../lib/tasks'
+import { withBreaks } from '../lib/breaks'
 import { subjectIcon, subjectStyle } from '../lib/subjectColor'
 import { IconCheck, IconPlus, IconSettings, IconTrash } from '../components/icons'
 import { useTapOrLongPress } from '../hooks/useTapOrLongPress'
+import { ThemeToggle } from '../components/ThemeToggle'
 import type { AppPage, ClassDefinition, Task } from '../types'
 
 interface Props {
@@ -189,11 +191,22 @@ export function MobileHome({ now, onNavigate, onOpenSettings, onContext }: Props
         .map((def) => {
           const stored = occurrences[occurrenceId(def.id, dISO)]
           const { display, live, userSet } = occurrenceDisplay(def, now, stored, now, inSem)
-          return { def, display, live, userSet }
+          return {
+            def,
+            display,
+            live,
+            userSet,
+            startMin: clockToMinutes(def.startTime),
+            endMin: clockToMinutes(def.endTime),
+          }
         })
-        .sort((a, b) => clockToMinutes(a.def.startTime) - clockToMinutes(b.def.startTime)),
+        .sort((a, b) => a.startMin - b.startMin),
     [timetable.classes, dow, occurrences, dISO, now, inSem],
   )
+
+  // Lunch belongs in the list as a divider: the day reads as it is actually
+  // shaped, and nobody is asked to tick off a meal.
+  const dayRows = useMemo(() => withBreaks(todays, timetable.breaks), [todays, timetable.breaks])
 
   const tasks = useMemo(() => sortTasks(Object.values(tasksById)), [tasksById])
   const tasksDone = countDone(tasks)
@@ -220,13 +233,16 @@ export function MobileHome({ now, onNavigate, onOpenSettings, onContext }: Props
         <span className="brand">
           Tally<span className="dot">.</span>
         </span>
-        <button
-          className="icon-btn"
-          aria-label="Settings"
-          onClick={(e) => onOpenSettings((e.currentTarget as HTMLElement).getBoundingClientRect())}
-        >
-          <IconSettings width={19} height={19} />
-        </button>
+        <div className="m-topbar-actions">
+          <ThemeToggle />
+          <button
+            className="icon-btn"
+            aria-label="Settings"
+            onClick={(e) => onOpenSettings((e.currentTarget as HTMLElement).getBoundingClientRect())}
+          >
+            <IconSettings width={19} height={19} />
+          </button>
+        </div>
       </header>
 
       <section className="td-hero">
@@ -263,18 +279,26 @@ export function MobileHome({ now, onNavigate, onOpenSettings, onContext }: Props
         ) : (
           <>
             <ul className="td-list">
-              {todays.map(({ def, display, live, userSet }) => (
-                <ClassRow
-                  key={def.id}
-                  def={def}
-                  dateISO={dISO}
-                  display={display}
-                  live={live}
-                  userSet={userSet}
-                  onToggle={toggleAttendance}
-                  onContext={onContext}
-                />
-              ))}
+              {dayRows.map((row) =>
+                row.kind === 'break' ? (
+                  <li className="break-row" key={row.brk.id}>
+                    <span className="break-line" aria-hidden="true" />
+                    <span className="break-text">{row.brk.label}</span>
+                    <span className="break-line" aria-hidden="true" />
+                  </li>
+                ) : (
+                  <ClassRow
+                    key={row.item.def.id}
+                    def={row.item.def}
+                    dateISO={dISO}
+                    display={row.item.display}
+                    live={row.item.live}
+                    userSet={row.item.userSet}
+                    onToggle={toggleAttendance}
+                    onContext={onContext}
+                  />
+                ),
+              )}
             </ul>
             <p className="td-hint">Tap to mark present · hold for more</p>
           </>

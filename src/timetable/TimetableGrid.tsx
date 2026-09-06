@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../store/appStore'
 import { occurrenceId } from '../lib/id'
 import { dayBounds, layoutDay, withinSemester } from '../lib/schedule'
+import { visibleBreaks } from '../lib/breaks'
 import { occurrenceDisplay } from '../lib/occurrenceDisplay'
 import { isSameDay, isoDate, isoWeekday, minutesToLabel } from '../lib/time'
 import { dowShort, shortDate } from '../lib/format'
@@ -45,6 +46,11 @@ export function TimetableGrid({ days, now, onContext }: Props) {
   const pxPerMin = Math.min(2.2, Math.max(0.85, (bodyH - 8) / span))
   const bodyHeight = span * pxPerMin
 
+  // Lunch is drawn as a band straight across every column, exactly as the
+  // printed timetable draws it, with the label in the time gutter so it is said
+  // once rather than repeated in all five columns.
+  const breakBands = visibleBreaks(timetable.breaks, min, max)
+
   const hourMarks: number[] = []
   for (let m = min; m <= max; m += 60) hourMarks.push(m)
 
@@ -87,6 +93,18 @@ export function TimetableGrid({ days, now, onContext }: Props) {
                 {minutesToLabel(m, { withMinutes: false })}
               </span>
             ))}
+          {breakBands.map((b) => (
+            <span
+              key={b.brk.id}
+              className="break-label"
+              style={{
+                top: (b.startMin - min) * pxPerMin,
+                height: (b.endMin - b.startMin) * pxPerMin,
+              }}
+            >
+              {b.brk.label}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -100,6 +118,17 @@ export function TimetableGrid({ days, now, onContext }: Props) {
             <div className="day-body" style={{ height: bodyHeight }}>
               {hourMarks.map((m) => (
                 <span key={m} className="hour-line" style={{ top: (m - min) * pxPerMin }} />
+              ))}
+              {breakBands.map((b) => (
+                <span
+                  key={b.brk.id}
+                  className="break-band"
+                  aria-hidden="true"
+                  style={{
+                    top: (b.startMin - min) * pxPerMin,
+                    height: (b.endMin - b.startMin) * pxPerMin,
+                  }}
+                />
               ))}
               {col.empty ? (
                 <span className="day-empty">No class</span>

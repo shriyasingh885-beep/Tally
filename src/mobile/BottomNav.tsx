@@ -2,7 +2,7 @@ import type { AppPage } from '../types'
 import { IconBarChart, IconCalendar, IconHome } from '../components/icons'
 
 const ITEMS: Array<{ key: AppPage; label: string; Icon: typeof IconHome }> = [
-  { key: 'home', label: 'Home', Icon: IconHome },
+  { key: 'home', label: 'To-do list', Icon: IconHome },
   { key: 'timetable', label: 'Timetable', Icon: IconCalendar },
   { key: 'attendance', label: 'Attendance', Icon: IconBarChart },
 ]
