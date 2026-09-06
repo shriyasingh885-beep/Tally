@@ -31,22 +31,43 @@ export function parseTimeToMinutes(raw: string): number | null {
 const RANGE_RE =
   /(\d{1,2}\s*[:.]?\s*\d{0,2}\s*(?:[ap]\.?m\.?)?)\s*(?:[-–—~]|to)\s*(\d{1,2}\s*[:.\-]?\s*\d{0,2}\s*(?:[ap]\.?m\.?)?)/i
 
+export interface TimeRange {
+  start: number
+  end: number | null
+}
+
+/**
+ * Every slot label in a string, left to right.
+ *
+ * More than one means the row boundary between two periods was lost — a merged
+ * cell erased the rule, so both labels ended up in a single cell. Returning all
+ * of them is what lets the caller notice and put the boundary back; keeping
+ * only the first silently deletes an hour of the week.
+ */
+export function parseTimeRanges(raw: string): TimeRange[] {
+  if (!raw) return []
+  const text = raw.replace(/\s+/g, ' ')
+  const out: TimeRange[] = []
+  for (const m of text.matchAll(new RegExp(RANGE_RE.source, 'gi'))) {
+    const start = parseTimeToMinutes(m[1].replace(/\s+/g, ''))
+    // "09-00" → "09:00"; a bare "09" stays 09:00
+    const end = parseTimeToMinutes(m[2].replace(/\s+/g, '').replace(/^(\d{1,2})-(\d{2})$/, '$1:$2'))
+    if (start == null) continue
+    out.push({ start, end })
+  }
+  if (!out.length) {
+    const single = parseTimeToMinutes(text.trim())
+    if (single != null) out.push({ start: single, end: null })
+  }
+  return out
+}
+
 /**
  * Parse a slot label like "08:00-09:00", "08:00-09-00" (a very common OCR
  * mangling), "9 - 10", "1:00-2:00 PM" into minutes past midnight.
  */
-export function parseTimeRange(raw: string): { start: number; end: number | null } | null {
-  if (!raw) return null
-  const m = raw.replace(/\s+/g, ' ').match(RANGE_RE)
-  if (!m) {
-    const single = parseTimeToMinutes(raw.trim())
-    return single == null ? null : { start: single, end: null }
-  }
-  const start = parseTimeToMinutes(m[1].replace(/\s+/g, ''))
-  // "09-00" → "09:00"; a bare "09" stays 09:00
-  const end = parseTimeToMinutes(m[2].replace(/\s+/g, '').replace(/^(\d{1,2})-(\d{2})$/, '$1:$2'))
-  if (start == null) return null
-  return { start, end }
+export function parseTimeRange(raw: string): TimeRange | null {
+  return parseTimeRanges(raw)[0] ?? null
 }
 
 export function minutesToClock(min: number): string {

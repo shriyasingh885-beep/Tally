@@ -10,6 +10,8 @@ export interface ParseResult {
   /** true when we read text but couldn't build a confident grid */
   partial?: boolean
   reason?: string
+  /** structural repairs and unresolved gaps found while building the time axis */
+  warnings?: string[]
 }
 
 const DAY_WORDS: Array<{ re: RegExp; dow: number }> = [

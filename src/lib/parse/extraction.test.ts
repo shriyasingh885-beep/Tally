@@ -283,6 +283,35 @@ describe('subject canonicalisation', () => {
     const map = canonicalize(['DS Lab', 'DS Lab', 'DSD Lab', 'DSD Lab', 'DSD Lab'])
     expect(new Set([...map.values()]).size).toBe(2)
   })
+
+  it('assembles a spelling that no single cell got right', () => {
+    // three readings, each fumbling a different letter: electing a whole
+    // variant can only ever return one of these three, all of them wrong
+    const map = canonicalize(['Limux Shell Prog', 'Linux Sheli Prog', 'Linux Shell Prpg'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Linux Shell Prog']))
+  })
+
+  it('settles capitalisation by majority per letter', () => {
+    const map = canonicalize(['oOP Lab', 'OoP Lab', 'OOp Lab'])
+    expect(new Set([...map.values()])).toEqual(new Set(['OOP Lab']))
+  })
+
+  it('recovers a letter the majority dropped', () => {
+    const map = canonicalize(['Mathematcs III', 'Mathematics III', 'Mathematics III'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Mathematics III']))
+  })
+
+  it('leaves a subject every cell agreed on exactly as it was', () => {
+    const map = canonicalize(['Data Structures', 'Data Structures', 'Data Structures'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Data Structures']))
+  })
+
+  it('does not let a consistent misread be voted away', () => {
+    // when every cell makes the SAME mistake there is nothing to vote with;
+    // the review screen is what catches these, and it must not pretend otherwise
+    const map = canonicalize(['Limux Shell Prog', 'Limux Shell Prog', 'Limux Shell Prog'])
+    expect(new Set([...map.values()])).toEqual(new Set(['Limux Shell Prog']))
+  })
 })
 
 describe('mobile grouping and batch filter', () => {

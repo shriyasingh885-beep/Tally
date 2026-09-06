@@ -4,7 +4,16 @@
  * grid lines, and those lines survive downscaling far better than 9px text
  * does — so we can recover the exact row/column geometry even when OCR of the
  * cell contents is poor.
+ *
+ * The hard case throughout is the merged cell: a two-hour class erases its own
+ * slice of a row boundary. One merged cell is harmless, but when every column
+ * merges across the same boundary the rule disappears from a full-width scan
+ * altogether and two periods silently become one. Row detection therefore runs
+ * in three independent layers — full-width rules, then per-column rules, then
+ * the row rhythm — so no single erasure can cost us a boundary.
  */
+
+import { estimateLineHeight } from './ocrPrep'
 
 export interface DetectedGrid {
   /** vertical rule positions, left→right (canvas px) */
@@ -19,6 +28,8 @@ export interface DetectedGrid {
   innerVLines: (x0: number, x1: number, y0: number, y1: number) => number[]
   /** fraction of ink inside a region — used to skip empty cells before OCR */
   inkRatio: (x0: number, y0: number, x1: number, y1: number) => number
+  /** median height of the text lines in a region — drives how far OCR scales it up */
+  textLineHeight: (x0: number, y0: number, x1: number, y1: number) => number
 }
 
 const INK_LUMA = 170
@@ -32,8 +43,53 @@ const V_COVERAGE = 0.7
 const H_COVERAGE = 0.5
 /** a per-cell border test — that segment is either fully drawn or absent */
 const SEGMENT_COVERAGE = 0.72
+/** inside a single column a border is never interrupted, so demand near-all of it */
+const STRIP_COVERAGE = 0.9
+/** an interior lane divider, likewise */
+const LANE_COVERAGE = 0.85
 /** rules closer together than this are the same rule */
 const MIN_SEP = 6
+/** bridge dropouts this small — antialiasing and JPEG nick a hairline rule */
+const RUN_GAP = 1
+
+/**
+ * A horizontal rule that a merged cell erases in EVERY column leaves no ink to
+ * detect, so the two rows either side of it collapse into one tall band. aSc,
+ * FET and similar exports rule their body rows at a constant pitch, so a gap
+ * that is a clean integer multiple of that pitch is really N rows with the
+ * interior rules rubbed out. Put them back — the per-column merge test in
+ * extractTimetable still decides, from pixels, whether any given cell actually
+ * spans a restored boundary, so this only ever adds candidate splits.
+ */
+export function fillImpliedRows(ys: number[]): number[] {
+  if (ys.length < 3) return ys
+  const gaps: number[] = []
+  for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1])
+  const pitch = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)]
+  if (!pitch || pitch < MIN_SEP) return ys
+
+  const out: number[] = [ys[0]]
+  for (let i = 1; i < ys.length; i++) {
+    const g = ys[i] - ys[i - 1]
+    const k = Math.round(g / pitch)
+    // only a near-exact multiple (2x–8x) — a merely tall header or a slightly
+    // uneven row must not be sliced up
+    if (k >= 2 && k <= 8 && Math.abs(g / pitch - k) <= 0.2) {
+      for (let j = 1; j < k; j++) out.push(Math.round(ys[i - 1] + (g * j) / k))
+    }
+    out.push(ys[i])
+  }
+  return out
+}
+
+/** Add positions that aren't already represented, keeping the originals exact. */
+export function mergeRules(base: number[], extra: number[], minSep = MIN_SEP): number[] {
+  const out = [...base]
+  for (const v of extra) {
+    if (!out.some((u) => Math.abs(u - v) < minSep)) out.push(v)
+  }
+  return out.sort((a, b) => a - b)
+}
 
 /**
  * Collapse consecutive hit rows/columns into single rule positions.
@@ -93,6 +149,36 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
     return n
   }
 
+  /**
+   * Longest unbroken stretch of ink along a scanline.
+   *
+   * This is what tells a ruled line apart from a line of text. A border is one
+   * continuous stroke across its whole cell; glyphs are separated by paper
+   * every few pixels, so a dense row of text has a long *total* but a short
+   * longest run. Every "is there a border here?" test below measures the run,
+   * never the total, which is why cell contents can never be mistaken for one.
+   */
+  const longestRun = (start: number, stride: number, count: number) => {
+    let longest = 0
+    let run = 0
+    let gap = 0
+    for (let i = 0, p = start; i < count; i++, p += stride) {
+      if (ink[p]) {
+        run += gap + 1
+        gap = 0
+        continue
+      }
+      if (!run) continue
+      gap++
+      if (gap > RUN_GAP) {
+        if (run > longest) longest = run
+        run = 0
+        gap = 0
+      }
+    }
+    return run > longest ? run : longest
+  }
+
   // Rules stay hairline even on big scans; filled bands do not.
   const maxThickness = Math.max(6, Math.round(Math.max(w, h) / 250))
 
@@ -144,24 +230,52 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
   )
   if (ys.length < 3) return null
 
+  // --- pass 5: rules that survive in only one column ------------------------
+  // When every day column merges across the same boundary — five parallel
+  // 10:00-12:00 blocks, say — that rule is erased from the full-width scan and
+  // pass 1 never sees it. It is still drawn in the time gutter, and in any
+  // column that happened not to merge. So look for it one column at a time: an
+  // unbroken, hairline segment filling a single strip is a row boundary,
+  // whatever the rest of the table does at that height.
+  const stripRules: number[] = []
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i] + 2
+    const x1 = xs[i + 1] - 2
+    const span = x1 - x0 + 1
+    if (span < 12) continue
+    const hits: number[] = []
+    for (let y = Math.max(0, tableTop); y <= Math.min(h - 1, tableBottom); y++) {
+      if (longestRun(y * w + x0, 1, span) >= STRIP_COVERAGE * span) hits.push(y)
+    }
+    stripRules.push(...clusterRuns(hits, maxThickness))
+  }
+  ys = mergeRules(ys, stripRules)
+
+  // --- pass 6: rules erased from every column alike, inferred from rhythm ---
+  ys = fillImpliedRows(ys)
+
   const hasHLine = (x0: number, x1: number, y: number) => {
-    const span = Math.max(1, x1 - x0)
+    const ax0 = Math.max(0, x0)
+    const ax1 = Math.min(w - 1, x1)
+    const span = Math.max(1, ax1 - ax0 + 1)
     let best = 0
     for (let dy = -2; dy <= 2; dy++) {
       const yy = y + dy
       if (yy < 0 || yy >= h) continue
-      best = Math.max(best, rowInk(yy, Math.max(0, x0), Math.min(w - 1, x1)))
+      best = Math.max(best, longestRun(yy * w + ax0, 1, span))
     }
-    return best > SEGMENT_COVERAGE * span
+    return best >= SEGMENT_COVERAGE * span
   }
 
   const innerVLines = (x0: number, x1: number, y0: number, y1: number) => {
-    const span = Math.max(1, y1 - y0)
+    const ay0 = Math.max(0, y0 + 2)
+    const ay1 = Math.min(h - 1, y1 - 2)
+    const span = ay1 - ay0 + 1
     if (span < 12) return []
     const hits: number[] = []
     // stay clear of the cell's own borders
     for (let x = Math.max(0, x0 + 3); x <= Math.min(w - 1, x1 - 3); x++) {
-      if (colInk(x, Math.max(0, y0 + 2), Math.min(h - 1, y1 - 2)) > 0.8 * span) hits.push(x)
+      if (longestRun(ay0 * w + x, w, span) >= LANE_COVERAGE * span) hits.push(x)
     }
     return clusterRuns(hits, maxThickness)
   }
@@ -180,5 +294,16 @@ export function detectGrid(canvas: HTMLCanvasElement): DetectedGrid | null {
     return n / area
   }
 
-  return { xs, ys, width: w, height: h, hasHLine, innerVLines, inkRatio }
+  const textLineHeight = (x0: number, y0: number, x1: number, y1: number) => {
+    const ax0 = Math.max(0, Math.round(x0))
+    const ay0 = Math.max(0, Math.round(y0))
+    const ax1 = Math.min(w - 1, Math.round(x1))
+    const ay1 = Math.min(h - 1, Math.round(y1))
+    if (ax1 <= ax0 || ay1 <= ay0) return 0
+    const profile: number[] = []
+    for (let y = ay0; y <= ay1; y++) profile.push(rowInk(y, ax0, ax1))
+    return estimateLineHeight(profile)
+  }
+
+  return { xs, ys, width: w, height: h, hasHLine, innerVLines, inkRatio, textLineHeight }
 }

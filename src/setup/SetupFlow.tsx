@@ -23,6 +23,8 @@ const PARTIAL_NOTES: Record<string, string> = {
     'We picked up the grid but couldn’t read the class details. Add them below.',
   messy:
     'Some classes came through, but this layout (parallel lab batches, merged cells) is hard to read automatically. Please check every row and add anything missing.',
+  'time-gap':
+    'Part of the day had no readable time row, so classes in it may be missing. Check the times below against your timetable.',
 }
 
 export function SetupFlow() {

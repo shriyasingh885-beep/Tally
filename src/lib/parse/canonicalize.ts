@@ -51,6 +51,132 @@ function trimJunk(s: string): string {
   return out.replace(/\s{2,}/g, ' ')
 }
 
+/**
+ * Align `other` onto `spine`, Needleman-Wunsch, and report what landed where.
+ * `at[i]` is the character of `other` that lines up with `spine[i]` ('' if the
+ * reading dropped it); `before[i]` is anything it inserted ahead of that spot.
+ */
+function align(spine: string, other: string): { at: string[]; before: string[] } {
+  const n = spine.length
+  const m = other.length
+  const MATCH = 2
+  const MIS = -1
+  const GAP = -2
+  const score = (i: number, j: number) =>
+    spine[i].toLowerCase() === other[j].toLowerCase() ? MATCH : MIS
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+  for (let i = 1; i <= n; i++) dp[i][0] = i * GAP
+  for (let j = 1; j <= m; j++) dp[0][j] = j * GAP
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = Math.max(dp[i - 1][j - 1] + score(i - 1, j - 1), dp[i - 1][j] + GAP, dp[i][j - 1] + GAP)
+    }
+  }
+
+  const at = new Array<string>(n).fill('')
+  const before = new Array<string>(n + 1).fill('')
+  let i = n
+  let j = m
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && dp[i][j] === dp[i - 1][j - 1] + score(i - 1, j - 1)) {
+      at[i - 1] = other[j - 1]
+      i--
+      j--
+    } else if (i > 0 && dp[i][j] === dp[i - 1][j] + GAP) {
+      i--
+    } else if (j > 0) {
+      before[i] = other[j - 1] + before[i]
+      j--
+    } else {
+      i--
+    }
+  }
+  return { at, before }
+}
+
+/** letters beat digits beat punctuation beat nothing, when votes are level */
+function rank(ch: string): number {
+  if (!ch) return 0
+  if (/[a-z]/i.test(ch)) return 3
+  if (/\d/.test(ch)) return 2
+  return 1
+}
+
+/**
+ * The winning character for one column of the vote.
+ *
+ * Case is decided separately from identity: "oop", "OoP" and "OOP" all agree
+ * there is an O here, so they are counted together first and the capitalisation
+ * settled afterwards. Otherwise three differently-cased readings would look
+ * like three different characters and none would reach a majority.
+ */
+function pick(votes: Map<string, number>): string {
+  const folded = new Map<string, number>()
+  for (const [ch, n] of votes) {
+    const k = ch.toLowerCase()
+    folded.set(k, (folded.get(k) ?? 0) + n)
+  }
+  let key = ''
+  let keyVotes = -1
+  for (const [k, n] of folded) {
+    if (n > keyVotes || (n === keyVotes && rank(k) > rank(key))) {
+      key = k
+      keyVotes = n
+    }
+  }
+  let best = key
+  let bestVotes = -1
+  for (const [ch, n] of votes) {
+    if (ch.toLowerCase() !== key) continue
+    if (n > bestVotes) {
+      bestVotes = n
+      best = ch
+    }
+  }
+  return best
+}
+
+/**
+ * Vote on a cluster character by character instead of picking a whole reading.
+ *
+ * Electing the most common variant can only ever return a spelling that some
+ * cell actually produced, so a subject nobody read correctly stays wrong
+ * forever. Voting per character can assemble the right word out of readings
+ * that were each wrong in a different place: "Limux"/"Sheli"/"Prpg" agree on
+ * every letter except the one each of them fumbled.
+ *
+ * It cannot rescue a mistake OCR makes *consistently* — if every cell reads the
+ * same wrong letter, that letter wins the vote. Those need a human, which is
+ * what the review screen is for.
+ */
+export function consensus(spine: string, variants: Array<{ text: string; count: number }>): string {
+  if (variants.length < 2) return spine
+  const at = Array.from({ length: spine.length }, () => new Map<string, number>())
+  const ins = Array.from({ length: spine.length + 1 }, () => new Map<string, number>())
+  let total = 0
+
+  const bump = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) ?? 0) + n)
+
+  for (const v of variants) {
+    if (!v.count) continue
+    total += v.count
+    const a = align(spine, v.text)
+    for (let i = 0; i < spine.length; i++) bump(at[i], a.at[i], v.count)
+    for (let i = 0; i <= spine.length; i++) bump(ins[i], a.before[i], v.count)
+  }
+  if (total < 2) return spine
+
+  let out = ''
+  for (let i = 0; i <= spine.length; i++) {
+    // an insertion has to be agreed by an outright majority to make the cut
+    const extra = pick(ins[i])
+    if (extra && (ins[i].get(extra) ?? 0) * 2 > total) out += extra
+    if (i < spine.length) out += pick(at[i])
+  }
+  return out.replace(/\s{2,}/g, ' ').trim()
+}
+
 export interface CanonOptions {
   /** how alike two strings must be to merge (0-1) */
   threshold?: number
@@ -128,7 +254,21 @@ export function canonicalize(values: string[], opts: CanonOptions = {}): Map<str
       if (Math.abs(qa - qb) > 0.05) return qb - qa
       return b.length - a.length
     })[0]
-    for (const member of cluster) winner.set(member, best)
+
+    // Then let the whole cluster vote character by character, which can arrive
+    // at a spelling no single cell produced. Only adopt it if it still looks
+    // like the reading it came from and reads at least as cleanly — a vote
+    // should refine the winner, never replace it with something unrecognisable.
+    const voted = consensus(
+      best,
+      cluster.map((c) => ({ text: c, count: counts.get(c) ?? 0 })),
+    )
+    const elected =
+      voted && similarity(normal(voted), normal(best)) >= 0.6 && cleanliness(voted) >= cleanliness(best)
+        ? voted
+        : best
+
+    for (const member of cluster) winner.set(member, elected)
   }
 
   const out = new Map<string, string>()

@@ -81,6 +81,18 @@ export function UploadTimetable({ onFile }: Props) {
         />
       </div>
 
+      {/* A PDF carries its own text, so we read the characters instead of
+          recognising pixels — exact, and far faster. Worth saying plainly:
+          most people have both and would otherwise screenshot out of habit. */}
+      <p className="up-tip">
+        <span aria-hidden="true">💡</span>
+        <span>
+          <b>A PDF works best.</b> We can read its text directly, so subjects and rooms come through
+          exactly. Screenshots have to be recognised letter by letter, and small type often needs
+          fixing afterwards.
+        </span>
+      </p>
+
       {(localErr || parseError) && (
         <div className="banner" role="alert">
           {localErr || parseError}

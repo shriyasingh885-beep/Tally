@@ -983,6 +983,24 @@ p {
   letter-spacing: 0.04em;
 }
 
+.up-tip {
+  margin-top: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--accent-wash);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  text-align: left;
+}
+.up-tip b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .setup-actions {
   margin-top: 26px;
   display: flex;

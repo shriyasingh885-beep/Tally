@@ -1,8 +1,10 @@
 import type { ClassDefinition } from '../../types'
 import { uid } from '../id'
-import { minutesToClock, parseTimeRange } from '../time'
+import { minutesToClock } from '../time'
 import { canonicalize } from './canonicalize'
 import { detectGrid, type DetectedGrid } from './gridDetect'
+import { buildTimeAxis } from './timeAxis'
+import { binarize, ocrScale } from './ocrPrep'
 import { extractDocument, fileToCanvas, isPdf, type Token } from './extractText'
 import { matchDay, parseTimetable, type ParseResult } from './parseTimetable'
 import { analyseCorpus, classifyCell, type Corpus, type RawCell } from './cellModel'
@@ -10,12 +12,21 @@ import { scoreConfidence, validateClasses } from './validate'
 
 export type ProgressFn = (step: string, pct?: number) => void
 
-/** Blow each cell up to roughly this tall before OCR — small type needs it. */
+/**
+ * Blow each cell up until its TYPE is about this tall. Tesseract wants roughly
+ * 30px letters; timetable screenshots supply about 9.
+ */
+const TARGET_LINE_PX = 32
+/** fallback when a cell's ink profile is too noisy to find a line height in */
 const TARGET_CELL_PX = 150
-const MAX_CELL_PX = 1400
+const MAX_CELL_PX = 1600
+const MAX_CELL_H = 1000
+const MAX_SCALE = 6
 const CELL_INSET = 3
 /** below this ink density a cell is a free period — don't pay for OCR */
 const BLANK_INK = 0.004
+/** no real class merges across more rows than this — a longer walk is a bug */
+const MAX_ROW_SPAN = 8
 /** entries below this are shown as needing review rather than as fact */
 const LOW_CONFIDENCE = 0.6
 
@@ -40,21 +51,37 @@ async function ocrRegion(
   y0: number,
   x1: number,
   y1: number,
+  lineHeight: number,
 ): Promise<RegionText> {
   const w = x1 - x0 - CELL_INSET * 2
   const h = y1 - y0 - CELL_INSET * 2
   if (w < 6 || h < 6) return { text: '', confidence: 0 }
 
-  const scale = Math.max(1, Math.min(6, TARGET_CELL_PX / h, MAX_CELL_PX / w))
+  const scale = ocrScale({
+    lineHeight,
+    cellWidth: w,
+    cellHeight: h,
+    targetLine: TARGET_LINE_PX,
+    targetCell: TARGET_CELL_PX,
+    maxWidth: MAX_CELL_PX,
+    maxHeight: MAX_CELL_H,
+    maxScale: MAX_SCALE,
+  })
   const c = document.createElement('canvas')
   c.width = Math.round(w * scale)
   c.height = Math.round(h * scale)
-  const ctx = c.getContext('2d')!
+  const ctx = c.getContext('2d', { willReadFrequently: true })!
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.fillStyle = '#fff'
   ctx.fillRect(0, 0, c.width, c.height)
   ctx.drawImage(src, x0 + CELL_INSET, y0 + CELL_INSET, w, h, 0, 0, c.width, c.height)
+
+  // Smooth upscaling leaves grey haloes around every stroke; flatten them back
+  // to solid black on solid white so the recogniser sees glyph shapes, not fog.
+  const img = ctx.getImageData(0, 0, c.width, c.height)
+  binarize(img.data, c.width, c.height)
+  ctx.putImageData(img, 0, 0)
 
   try {
     const { data } = await worker.recognize(c)
@@ -125,50 +152,23 @@ async function findHeaderRow(
   return best
 }
 
-export interface Slot {
-  start: number
-  end: number
-  /** true when this row's label could not be read and was filled from neighbours */
-  inferred: boolean
-}
-
-async function readTimeColumn(
+/** Raw label text for every body row of the time gutter, unparsed. */
+async function readTimeLabels(
   read: ReadRegion,
   grid: DetectedGrid,
   timeCol: number,
   firstBodyRow: number,
   onProgress: ProgressFn,
-): Promise<Array<Slot | null>> {
-  const slots: Array<Slot | null> = []
+): Promise<string[]> {
+  const texts: string[] = []
   const total = grid.ys.length - 1 - firstBodyRow
 
   for (let r = firstBodyRow; r < grid.ys.length - 1; r++) {
     const { text } = await read(grid.xs[timeCol], grid.ys[r], grid.xs[timeCol + 1], grid.ys[r + 1])
-    const range = parseTimeRange(textLines(text).join(' '))
-    slots.push(range && range.end != null ? { start: range.start, end: range.end, inferred: false } : null)
-    onProgress('slots', (slots.length / Math.max(1, total)) * 100)
+    texts.push(textLines(text).join(' '))
+    onProgress('slots', (texts.length / Math.max(1, total)) * 100)
   }
-
-  // Repair unreadable slots from their neighbours, then force the day to run
-  // forwards (12-hour labels like "01:00-02:00" after noon read as 1 AM).
-  const readable = slots.filter(Boolean) as Slot[]
-  const step = readable.length > 1 ? Math.round((readable[1].start - readable[0].start) / 60) * 60 || 60 : 60
-  for (let i = 0; i < slots.length; i++) {
-    if (slots[i]) continue
-    const prev = i > 0 ? slots[i - 1] : null
-    if (prev) slots[i] = { start: prev.end, end: prev.end + step, inferred: true }
-  }
-  for (let i = 1; i < slots.length; i++) {
-    const cur = slots[i]
-    const prev = slots[i - 1]
-    if (!cur || !prev) continue
-    while (cur.start < prev.start && cur.start + 12 * 60 < 24 * 60) {
-      cur.start += 12 * 60
-      cur.end += 12 * 60
-    }
-    if (cur.end <= cur.start) cur.end = cur.start + step
-  }
-  return slots
+  return texts
 }
 
 /**
@@ -280,6 +280,9 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
   if (!pdfRead) {
     const { createWorker } = await import('tesseract.js')
     worker = (await createWorker('eng', 1)) as unknown as Worker
+    // Cells are cropped out of a screenshot with no DPI of their own; telling
+    // Tesseract what to assume stops it second-guessing the scale we chose.
+    await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' })
   }
 
   try {
@@ -293,7 +296,13 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
           await worker!.setParameters({ tessedit_pageseg_mode: mode })
           psm = mode
         }
-        return ocrRegion(worker!, canvas, x0, y0, x1, y1)
+        const lineHeight = grid.textLineHeight(
+          x0 + CELL_INSET,
+          y0 + CELL_INSET,
+          x1 - CELL_INSET,
+          y1 - CELL_INSET,
+        )
+        return ocrRegion(worker!, canvas, x0, y0, x1, y1, lineHeight)
       })
 
     const readLine = withMode('7') // a single line: day headers and time labels
@@ -311,19 +320,26 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
       return { classes: [], ok: true, partial: true, reason: 'no-times' }
     }
 
-    const slots = await readTimeColumn(readLine, grid, timeCol, firstBodyRow, onProgress)
-    if (!slots.some(Boolean)) return { classes: [], ok: true, partial: true, reason: 'no-times' }
+    const labels = await readTimeLabels(readLine, grid, timeCol, firstBodyRow, onProgress)
+
+    // The labels have the last word on the row structure: a cell carrying two
+    // of them proves a boundary the pixels lost, so the axis can hand back
+    // corrected geometry to go with its slots.
+    const axis = buildTimeAxis(grid.ys.slice(firstBodyRow), labels)
+    if (!axis.slots.some(Boolean)) return { classes: [], ok: true, partial: true, reason: 'no-times' }
+    const ys = [...grid.ys.slice(0, firstBodyRow), ...axis.ys]
+    const slots = axis.slots
 
     onProgress('subjects', 0)
 
     // ---- pass A: read every occupied cell, keeping its geometry ----
     const cells: RawCell[] = []
     const consumed = new Set<string>()
-    const bodyRows = grid.ys.length - 1 - firstBodyRow
+    const bodyRows = ys.length - 1 - firstBodyRow
     let done = 0
     const totalCells = bodyRows * dayCols.length
 
-    for (let r = firstBodyRow; r < grid.ys.length - 1; r++) {
+    for (let r = firstBodyRow; r < ys.length - 1; r++) {
       const slot = slots[r - firstBodyRow]
       for (const c of dayCols) {
         done++
@@ -332,19 +348,25 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
 
         // How many rows does this cell merge across? A missing bottom rule means
         // it keeps going — that's one two-hour class, not two one-hour classes.
+        // The cap matters: if rule detection failed for a whole column, an
+        // uncapped walk would swallow the entire day into one bogus class.
         let span = 1
         while (
-          r + span < grid.ys.length - 1 &&
-          !grid.hasHLine(grid.xs[c] + 4, grid.xs[c + 1] - 4, grid.ys[r + span])
+          span < MAX_ROW_SPAN &&
+          r + span < ys.length - 1 &&
+          !grid.hasHLine(grid.xs[c] + 4, grid.xs[c + 1] - 4, ys[r + span])
         ) {
           consumed.add(`${r + span}:${c}`)
           span++
         }
 
-        const yTop = grid.ys[r]
-        const yBot = grid.ys[r + span]
-        const endSlot = slots[r + span - 1 - firstBodyRow]
-        const endMin = endSlot ? endSlot.end : slot.end
+        const yTop = ys[r]
+        const yBot = ys[r + span]
+        // Every row the cell covers must be accounted for, so take the end from
+        // the last one that has a slot rather than assuming the span's own tail.
+        let endSlot = slots[r + span - 1 - firstBodyRow]
+        for (let k = span - 1; k >= 0 && !endSlot; k--) endSlot = slots[r + k - firstBodyRow]
+        const endMin = Math.max(slot.end, endSlot ? endSlot.end : slot.end)
 
         // Interior rules split one slot into parallel batches (B1 | B2 | B3).
         // Each slice is its own class sharing the exact same time range.
@@ -391,8 +413,18 @@ export async function extractTimetable(file: File, onProgress: ProgressFn): Prom
 
     if (!classes.length) return { classes: [], ok: true, partial: true, reason: 'no-cells' }
 
+    // An hour the axis couldn't account for is exactly how a missing rule used
+    // to hide: everything looks fine, but a class is simply not there. Send the
+    // user to the review screen with it named rather than let it pass.
     const flagged = classes.filter((c) => c.review?.length).length
-    return { classes, ok: true, partial: flagged > classes.length / 2 }
+    const messy = flagged > classes.length / 2
+    return {
+      classes,
+      ok: true,
+      partial: messy || axis.gaps.length > 0,
+      reason: axis.gaps.length && !messy ? 'time-gap' : undefined,
+      warnings: axis.warnings.length ? axis.warnings : undefined,
+    }
   } finally {
     await worker?.terminate()
   }
