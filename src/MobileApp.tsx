@@ -7,6 +7,7 @@ import { MobileTimetable } from './mobile/MobileTimetable'
 import { AttendancePage } from './attendance/AttendancePage'
 import { BottomNav } from './mobile/BottomNav'
 import { ContextMenu, type CtxTarget } from './components/ContextMenu'
+import { EditClassModal } from './components/EditClassModal'
 import { SettingsMenu } from './components/SettingsMenu'
 import { RotateOverlay } from './components/RotateOverlay'
 
@@ -20,6 +21,7 @@ export function MobileApp() {
   const orient = useOrientation()
 
   const [ctx, setCtx] = useState<CtxTarget | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
 
   const openContext = useCallback((defId: string, dateISO: string, x: number, y: number) => {
@@ -32,7 +34,12 @@ export function MobileApp() {
     <div className="app mobile-app">
       <div className="m-content">
         {page === 'home' && (
-          <MobileHome now={now} onNavigate={setPage} onOpenSettings={setSettingsAnchor} />
+          <MobileHome
+            now={now}
+            onNavigate={setPage}
+            onOpenSettings={setSettingsAnchor}
+            onContext={openContext}
+          />
         )}
         {page === 'timetable' && (
           <MobileTimetable now={now} onContext={openContext} onOpenSettings={setSettingsAnchor} />
@@ -42,7 +49,8 @@ export function MobileApp() {
 
       <BottomNav page={page} onChange={setPage} />
 
-      {ctx && <ContextMenu target={ctx} onClose={() => setCtx(null)} />}
+      {ctx && <ContextMenu target={ctx} onClose={() => setCtx(null)} onEdit={setEditingId} />}
+      {editingId && <EditClassModal defId={editingId} onClose={() => setEditingId(null)} />}
       {settingsAnchor && (
         <SettingsMenu anchor={settingsAnchor} onClose={() => setSettingsAnchor(null)} />
       )}

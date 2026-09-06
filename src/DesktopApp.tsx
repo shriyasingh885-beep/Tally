@@ -6,6 +6,7 @@ import { Header } from './components/Header'
 import { TimetablePage } from './timetable/TimetablePage'
 import { AttendancePage } from './attendance/AttendancePage'
 import { ContextMenu, type CtxTarget } from './components/ContextMenu'
+import { EditClassModal } from './components/EditClassModal'
 import { SettingsMenu } from './components/SettingsMenu'
 
 export function DesktopApp() {
@@ -22,6 +23,7 @@ export function DesktopApp() {
   const now = useNow(30_000)
 
   const [ctx, setCtx] = useState<CtxTarget | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null)
 
   const openContext = useCallback((defId: string, dateISO: string, x: number, y: number) => {
@@ -125,7 +127,8 @@ export function DesktopApp() {
         </div>
       </div>
 
-      {ctx && <ContextMenu target={ctx} onClose={() => setCtx(null)} />}
+      {ctx && <ContextMenu target={ctx} onClose={() => setCtx(null)} onEdit={setEditingId} />}
+      {editingId && <EditClassModal defId={editingId} onClose={() => setEditingId(null)} />}
       {settingsAnchor && (
         <SettingsMenu anchor={settingsAnchor} onClose={() => setSettingsAnchor(null)} />
       )}

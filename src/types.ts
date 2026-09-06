@@ -86,6 +86,21 @@ export interface NonClassDate {
   reason?: string
 }
 
+/**
+ * A to-do the user wrote themselves, alongside the classes the timetable
+ * supplies. Deliberately just a line of text and a tick: a list you can fill in
+ * two taps gets used, and a form with due dates and subject tags does not.
+ */
+export interface Task {
+  id: string
+  title: string
+  done: boolean
+  /** ISO timestamp — orders the list, and survives an edit to the title */
+  createdAt: string
+  /** ISO timestamp of the tick, so recently finished work sits at the top */
+  completedAt?: string
+}
+
 export type AppPage = 'home' | 'timetable' | 'attendance'
 
 export type SetupStage = 'upload' | 'parsing' | 'review' | 'complete'
@@ -101,4 +116,6 @@ export interface PersistedState {
   timetable: Timetable | null
   occurrences: Record<string, Occurrence>
   nonClassDates: Record<string, NonClassDate>
+  /** optional: absent from anything written before tasks existed */
+  tasks?: Record<string, Task>
 }

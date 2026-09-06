@@ -8,9 +8,11 @@ import type {
   ParseStep,
   PersistedState,
   SetupStage,
+  Task,
   Timetable,
 } from '../types'
 import { occurrenceId, uid } from '../lib/id'
+import { cleanTaskTitle } from '../lib/tasks'
 import { addDays, isoDate, localTimezone } from '../lib/time'
 import { startOfWeek } from '../lib/schedule'
 import { clearState, createSaver, loadState, STATE_VERSION } from '../lib/persist'
@@ -78,6 +80,7 @@ interface AppState {
   timetable: Timetable | null
   occurrences: Record<string, Occurrence>
   nonClassDates: Record<string, NonClassDate>
+  tasks: Record<string, Task>
 
   page: AppPage
   weekOffset: number
@@ -117,9 +120,17 @@ interface AppState {
   toggleAttendance: (defId: string, dateISO: string, now?: Date) => void
   setStatus: (defId: string, dateISO: string, status: AttendanceStatus, now?: Date) => void
 
+  // to-do list
+  addTask: (title: string) => void
+  toggleTask: (id: string) => void
+  removeTask: (id: string) => void
+  clearDoneTasks: () => void
+
   // settings
   setAttendanceTarget: (n: number) => void
   setSemester: (startISO: string, endISO: string) => void
+  /** edit one class in place; its id is kept so marked attendance stays attached */
+  updateClass: (id: string, patch: Partial<ClassDefinition>) => void
   replaceClasses: (classes: ClassDefinition[]) => void
   resetTimetable: () => Promise<void>
   retrySave: () => void
@@ -133,6 +144,7 @@ function persistedSnapshot(s: AppState): PersistedState {
     timetable: s.timetable,
     occurrences: s.occurrences,
     nonClassDates: s.nonClassDates,
+    tasks: s.tasks,
   }
 }
 
@@ -167,6 +179,7 @@ export const useApp = create<AppState>((set, get) => {
     timetable: null,
     occurrences: {},
     nonClassDates: {},
+    tasks: {},
 
     // Mobile opens straight onto the timetable — that is what the app is for.
     // Home stays one tap away in the bottom nav.
@@ -182,6 +195,7 @@ export const useApp = create<AppState>((set, get) => {
           timetable: data.timetable,
           occurrences: data.occurrences ?? {},
           nonClassDates: data.nonClassDates ?? {},
+          tasks: data.tasks ?? {},
           phase: 'ready',
           setupStage: 'complete',
           hydrated: true,
@@ -405,6 +419,57 @@ export const useApp = create<AppState>((set, get) => {
       flushSave()
     },
 
+    /**
+     * Tasks are the user's own words, so an empty or whitespace-only title is
+     * a mis-tap rather than an entry — swallow it instead of littering the list.
+     */
+    addTask(title) {
+      const clean = cleanTaskTitle(title)
+      if (!clean) return
+      const id = uid('task')
+      set((s) => ({
+        tasks: {
+          ...s.tasks,
+          [id]: { id, title: clean, done: false, createdAt: new Date().toISOString() },
+        },
+      }))
+      flushSave()
+    },
+
+    toggleTask(id) {
+      set((s) => {
+        const task = s.tasks[id]
+        if (!task) return {}
+        const done = !task.done
+        return {
+          tasks: {
+            ...s.tasks,
+            [id]: { ...task, done, completedAt: done ? new Date().toISOString() : undefined },
+          },
+        }
+      })
+      flushSave()
+    },
+
+    removeTask(id) {
+      set((s) => {
+        if (!s.tasks[id]) return {}
+        const next = { ...s.tasks }
+        delete next[id]
+        return { tasks: next }
+      })
+      flushSave()
+    },
+
+    clearDoneTasks() {
+      set((s) => {
+        const next: Record<string, Task> = {}
+        for (const [id, t] of Object.entries(s.tasks)) if (!t.done) next[id] = t
+        return { tasks: next }
+      })
+      flushSave()
+    },
+
     setAttendanceTarget(n) {
       const clamped = Math.max(1, Math.min(100, Math.round(n)))
       set((s) => (s.timetable ? { timetable: { ...s.timetable, attendanceTarget: clamped, updatedAt: new Date().toISOString() } } : {}))
@@ -418,6 +483,34 @@ export const useApp = create<AppState>((set, get) => {
           : {},
       )
       scheduleSave()
+    },
+
+    /**
+     * Editing a class must never re-create it: attendance is stored against the
+     * class id, so a new id would orphan every occurrence already marked. Patch
+     * in place and the record survives the edit.
+     */
+    updateClass(id, patch) {
+      set((s) => {
+        if (!s.timetable) return {}
+        const classes = s.timetable.classes.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                ...patch,
+                subject: (patch.subject ?? c.subject).trim(),
+                room: (patch.room ?? c.room).trim(),
+                teacher: (patch.teacher ?? c.teacher)?.trim() || undefined,
+                batch: (patch.batch ?? c.batch)?.trim() || undefined,
+                // a field the user has just set is no longer a parser guess
+                review: c.review?.filter((f) => !(f in patch)),
+              }
+            : c,
+        )
+        for (const c of classes) if (c.review && !c.review.length) delete c.review
+        return { timetable: { ...s.timetable, classes, updatedAt: new Date().toISOString() } }
+      })
+      flushSave()
     },
 
     replaceClasses(classes) {
@@ -442,6 +535,7 @@ export const useApp = create<AppState>((set, get) => {
         timetable: null,
         occurrences: {},
         nonClassDates: {},
+        tasks: {},
         page: 'timetable',
         weekOffset: 0,
         settingsOpen: false,

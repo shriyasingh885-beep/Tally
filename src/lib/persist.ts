@@ -4,7 +4,8 @@ import type { PersistedState } from '../types'
 const KEY = 'tally:v1'
 const LS_KEY = 'tally:v1:fallback'
 
-export const STATE_VERSION = 1
+/** 2 added `tasks`; older payloads simply lack the key and default to empty. */
+export const STATE_VERSION = 2
 
 let idbBroken = false
 
