@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '../store/appStore'
 import { occurrenceId } from '../lib/id'
 import { occurrenceDisplay } from '../lib/occurrenceDisplay'
 import { getWeekDays, withinSemester } from '../lib/schedule'
-import { clockToMinutes, isoDate, isoWeekday } from '../lib/time'
+import { clockToMinutes, isoDate, isoWeekday, minutesToLabel } from '../lib/time'
 import { dowShort } from '../lib/format'
+import { filterByBatch, groupByTime, selectableBatches } from '../lib/groupClasses'
 import { IconMoreVertical, IconSearch, IconX } from '../components/icons'
 import { AgendaCard } from './AgendaCard'
 
@@ -25,21 +26,40 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
   })
   const [searchOpen, setSearchOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [batch, setBatch] = useState<string | null>(null)
 
-  // Weekends have no Mon–Fri classes of their own — jump ahead to the coming
-  // week rather than stranding the user on a week that's entirely over.
-  const weekOffset = isoWeekday(now) > 5 ? 1 : 0
-  const days = useMemo(() => getWeekDays(weekOffset, 1, 5, now), [weekOffset, now])
+  const days = useMemo(() => getWeekDays(0, 1, 5, now), [now])
   const selectedDate = days[selectedDow - 1]
   const dISO = isoDate(selectedDate)
   const inSem = withinSemester(dISO, timetable)
 
-  const dayClasses = useMemo(() => {
+  // Only offer a batch filter when this timetable actually has batches.
+  const batches = useMemo(() => selectableBatches(timetable.classes), [timetable.classes])
+  useEffect(() => {
+    if (batch && !batches.includes(batch)) setBatch(null)
+  }, [batches, batch])
+
+  const groups = useMemo(() => {
     let list = timetable.classes.filter((c) => c.dayOfWeek === selectedDow)
+    list = filterByBatch(list, batch)
     const q = search.trim().toLowerCase()
-    if (q) list = list.filter((c) => c.subject.toLowerCase().includes(q) || c.room.toLowerCase().includes(q))
-    return list.sort((a, b) => clockToMinutes(a.startTime) - clockToMinutes(b.startTime))
-  }, [timetable.classes, selectedDow, search])
+    if (q) {
+      list = list.filter(
+        (c) =>
+          c.subject.toLowerCase().includes(q) ||
+          c.room.toLowerCase().includes(q) ||
+          (c.batch ?? '').toLowerCase().includes(q),
+      )
+    }
+    return groupByTime(list)
+  }, [timetable.classes, selectedDow, search, batch])
+
+  const viewFor = (defId: string) => {
+    const def = timetable.classes.find((c) => c.id === defId)!
+    const stored = occurrences[occurrenceId(def.id, dISO)]
+    const { display, ended, live, userSet } = occurrenceDisplay(def, selectedDate, stored, now, inSem)
+    return { def, dateISO: dISO, display, live, ended, userSet }
+  }
 
   return (
     <div className="m-page m-timetable">
@@ -70,7 +90,7 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
         <div className="m-search">
           <input
             autoFocus
-            placeholder="Search subject or room"
+            placeholder="Search subject, room or batch"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -93,22 +113,61 @@ export function MobileTimetable({ now, onContext, onOpenSettings }: Props) {
         })}
       </div>
 
+      {batches.length > 1 && (
+        <div className="batch-filter" role="group" aria-label="Filter by batch">
+          <button className={`batch-chip${batch === null ? ' active' : ''}`} onClick={() => setBatch(null)}>
+            All
+          </button>
+          {batches.map((b) => (
+            <button
+              key={b}
+              className={`batch-chip${batch === b ? ' active' : ''}`}
+              onClick={() => setBatch(b)}
+              aria-pressed={batch === b}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="agenda-list">
-        {dayClasses.length === 0 ? (
-          <div className="agenda-empty">{search ? 'No matching classes.' : 'No classes today'}</div>
+        {groups.length === 0 ? (
+          <div className="agenda-empty">
+            {search || batch ? 'No matching classes.' : 'No classes today'}
+          </div>
         ) : (
-          dayClasses.map((def) => {
-            const stored = occurrences[occurrenceId(def.id, dISO)]
-            const { display, ended, live, userSet } = occurrenceDisplay(def, selectedDate, stored, now, inSem)
-            return (
-              <AgendaCard
-                key={def.id}
-                view={{ def, dateISO: dISO, display, live, ended, userSet }}
-                onToggle={toggleAttendance}
-                onContext={onContext}
-              />
-            )
-          })
+          groups.map((group) =>
+            group.classes.length === 1 ? (
+              // A lone class carries its own time — no heading needed.
+              <div className="agenda-single" key={group.key}>
+                <AgendaCard
+                  view={viewFor(group.classes[0].id)}
+                  showTime
+                  onToggle={toggleAttendance}
+                  onContext={onContext}
+                />
+              </div>
+            ) : (
+              // Parallel batches share one time heading instead of repeating it.
+              <section className="time-group" key={group.key}>
+                <h2 className="tg-time">
+                  {minutesToLabel(clockToMinutes(group.startTime))} –{' '}
+                  {minutesToLabel(clockToMinutes(group.endTime))}
+                </h2>
+                <div className="tg-classes">
+                  {group.classes.map((c) => (
+                    <AgendaCard
+                      key={c.id}
+                      view={viewFor(c.id)}
+                      onToggle={toggleAttendance}
+                      onContext={onContext}
+                    />
+                  ))}
+                </div>
+              </section>
+            ),
+          )
         )}
       </div>
     </div>

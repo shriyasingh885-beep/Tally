@@ -34,6 +34,7 @@ function label(v: CellView): string {
   const time = `${minutesToLabel(clockToMinutes(def.startTime))} to ${minutesToLabel(
     clockToMinutes(def.endTime),
   )}`
+  const batch = def.batch ? `, batch ${def.batch}` : ''
   const room = def.room ? `, room ${def.room}` : ''
   const state =
     display === 'present'
@@ -45,7 +46,7 @@ function label(v: CellView): string {
             ? 'marked absent'
             : 'not marked, counts as absent'
           : 'attendance not marked'
-  return `${def.subject || 'Untitled class'}, ${DOW[def.dayOfWeek]}, ${time}${room}, ${state}`
+  return `${def.subject || 'Untitled class'}, ${DOW[def.dayOfWeek]}, ${time}${batch}${room}, ${state}`
 }
 
 export const ClassCell = memo(function ClassCell({ view, onToggle, onContext }: Props) {
@@ -158,7 +159,12 @@ export const ClassCell = memo(function ClassCell({ view, onToggle, onContext }: 
           </span>
         )}
       </span>
-      {def.room && <span className="c-room">{def.room}</span>}
+      {(def.batch || def.room) && (
+        <span className="c-room">
+          {def.batch && <span className="c-batch">{def.batch}</span>}
+          {def.room}
+        </span>
+      )}
       {height > 88 && (
         <span className="c-time">
           {minutesToLabel(clockToMinutes(def.startTime))} – {minutesToLabel(clockToMinutes(def.endTime))}

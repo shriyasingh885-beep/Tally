@@ -83,7 +83,22 @@ export function canonicalize(values: string[], opts: CanonOptions = {}): Map<str
       const rep = normal(cluster[0])
       // Long shared prefixes catch truncations that edit distance rates poorly.
       const prefix = Math.min(n.length, rep.length) >= 6 && n.slice(0, 6) === rep.slice(0, 6)
-      if (similarity(n, rep) >= threshold || prefix) {
+      const fuzzy = similarity(n, rep) >= threshold || prefix
+
+      // Two readings that BOTH recur are two real subjects, not one subject
+      // read two ways — "DS Lab" and "DSD Lab" are a deletion apart but are
+      // different classes. Only merge established pairs on a pure substitution
+      // of the same length; a rare variant can still merge loosely.
+      // The allowance has to scale with length: two edits in a sixteen-letter
+      // name is a misread, two edits in a three-letter acronym is a different
+      // subject entirely ("COA" vs "OOP").
+      const bothEstablished = (counts.get(u) ?? 0) >= 2 && (counts.get(cluster[0]) ?? 0) >= 2
+      const allowance = Math.max(1, Math.floor(n.length / 6))
+      const sameShape =
+        n.length === rep.length && levenshtein(n, rep) <= allowance && similarity(n, rep) >= 0.8
+      const mergeable = bothEstablished ? sameShape : fuzzy
+
+      if (mergeable) {
         cluster.push(u)
         placed = true
         break

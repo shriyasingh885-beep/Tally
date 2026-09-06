@@ -46,6 +46,7 @@ export const ClassTable = memo(function ClassTable({
       <div className="review-table" role="table" aria-label="Detected classes">
         <div className="rt-head" role="row">
           <span>Subject</span>
+          <span>Batch</span>
           <span>Day</span>
           <span>Start</span>
           <span>End</span>
@@ -69,6 +70,13 @@ export const ClassTable = memo(function ClassTable({
               }}
               onChange={(e) => onChange(c.id, { subject: e.target.value })}
               onBlur={(e) => onRenameSubject?.(editingFrom.current, e.target.value)}
+            />
+            <input
+              aria-label="Batch"
+              className={needs(c, 'batch') ? 'flag' : undefined}
+              value={c.batch ?? ''}
+              placeholder="—"
+              onChange={(e) => onChange(c.id, { batch: e.target.value })}
             />
             <select
               aria-label="Day"

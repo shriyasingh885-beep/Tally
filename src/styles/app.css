@@ -481,6 +481,19 @@ p {
 .cell .c-room {
   font-size: 11.5px;
   color: color-mix(in srgb, var(--cell-ink, var(--text-2)) 72%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.cell .c-batch {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--cell-ink, var(--text-2));
+  background: color-mix(in srgb, var(--cell-ink, var(--text-2)) 18%, transparent);
 }
 .cell .c-time {
   font-size: 10.5px;
@@ -1093,7 +1106,7 @@ p {
 .rt-head,
 .rt-row {
   display: grid;
-  grid-template-columns: 1.6fr 0.8fr 0.9fr 0.9fr 0.8fr 32px;
+  grid-template-columns: 1.5fr 0.6fr 0.7fr 0.85fr 0.85fr 0.8fr 32px;
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
@@ -1734,22 +1747,31 @@ p {
   color: var(--text-3);
   font-size: 13.5px;
 }
-.agenda-row {
-  display: flex;
-  align-items: stretch;
-  gap: 12px;
+/* ---- one time heading shared by parallel batch classes ---- */
+.time-group {
+  border: 1px solid var(--border);
+  background: var(--bg-sunk);
+  border-radius: var(--r-lg);
+  padding: 10px 10px 4px;
+  margin-bottom: 6px;
 }
-.agenda-time {
-  flex: none;
-  width: 46px;
-  padding-top: 13px;
-  font-size: 11.5px;
-  color: var(--text-3);
+.tg-time {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  padding: 0 4px 6px;
+}
+.tg-classes {
+  display: flex;
+  flex-direction: column;
+}
+.agenda-single {
+  display: block;
 }
 .agenda-card {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -1792,9 +1814,59 @@ p {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ac-time {
+  font-size: 12px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--ac-ink, var(--text-2)) 85%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.ac-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ac-batch {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--ac-ink, var(--text-2));
+  background: color-mix(in srgb, var(--ac-ink, var(--text-2)) 16%, transparent);
+}
 .ac-room {
   font-size: 12px;
   color: color-mix(in srgb, var(--ac-ink, var(--text-2)) 72%, transparent);
+}
+
+/* ---- batch filter ---- */
+.batch-filter {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+  margin: -6px 0 14px;
+}
+.batch-filter::-webkit-scrollbar {
+  display: none;
+}
+.batch-chip {
+  flex: none;
+  border: 1px solid var(--border-2);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease), color var(--dur-micro) var(--ease);
+}
+.batch-chip.active {
+  background: var(--accent-wash);
+  border-color: var(--present-border);
+  color: var(--accent-ink);
 }
 .check-circle {
   flex: none;

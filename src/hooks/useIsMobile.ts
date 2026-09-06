@@ -12,7 +12,13 @@ export function useIsMobile(): boolean {
     const onChange = () => setIsMobile(mql.matches)
     onChange()
     mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
+    // Some environments (device emulation, split-screen resizes) resize the
+    // viewport without firing a matchMedia change, so watch resize as well.
+    window.addEventListener('resize', onChange)
+    return () => {
+      mql.removeEventListener('change', onChange)
+      window.removeEventListener('resize', onChange)
+    }
   }, [])
   return isMobile
 }

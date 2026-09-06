@@ -2,11 +2,32 @@ export type AttendanceStatus = 'unmarked' | 'present' | 'absent' | 'cancelled'
 
 export type ClassType = 'lecture' | 'lab' | 'tutorial' | 'other'
 
+/** Where an extracted class sat in the source document's grid. */
+export interface SourceCell {
+  /** grid row index of the cell's top edge */
+  row: number
+  /** grid column index (the day column) */
+  col: number
+  /** how many grid rows the cell merged across */
+  rowSpan: number
+  /** which vertical slice of a split cell this came from (0 when not split) */
+  lane: number
+  /** how many slices the cell was split into (1 when not split) */
+  lanes: number
+}
+
 export interface ClassDefinition {
   id: string
   subject: string
   room: string
+  /** Faculty initials/name as printed in the source ("PrKh, IK"). */
   teacher?: string
+  /**
+   * Batch / group / section this class belongs to, exactly as the source
+   * writes it ("B", "B1", "IT-B3", "A, B"). Empty when the timetable has no
+   * batch system at all.
+   */
+  batch?: string
   type: ClassType
   /** 1 = Monday … 7 = Sunday (ISO). Timetable UI shows 1–5. */
   dayOfWeek: number
@@ -16,6 +37,14 @@ export interface ClassDefinition {
   endTime: string
   /** Fields the parser was not confident about; drives the review highlight. */
   review?: string[]
+
+  // ---- extraction provenance (absent for manually entered classes) ----
+  /** 0–1. How much the parser trusts this entry as a whole. */
+  confidence?: number
+  /** The raw cell text this entry was derived from, before any cleanup. */
+  originalText?: string
+  /** Which cell of the source grid this came from. */
+  sourceCell?: SourceCell
 }
 
 export interface Timetable {

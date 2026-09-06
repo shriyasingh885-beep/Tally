@@ -168,7 +168,9 @@ export const useApp = create<AppState>((set, get) => {
     occurrences: {},
     nonClassDates: {},
 
-    page: 'home',
+    // Mobile opens straight onto the timetable — that is what the app is for.
+    // Home stays one tap away in the bottom nav.
+    page: 'timetable',
     weekOffset: 0,
     settingsOpen: false,
     theme: readStoredTheme(),
